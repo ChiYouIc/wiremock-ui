@@ -1,6 +1,6 @@
 {
   "name": "wiremock-ui",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "WireMock 前端可视化操作工具",
   "type": "module",
   "main": "index.js",
