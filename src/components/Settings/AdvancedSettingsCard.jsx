@@ -1,43 +1,31 @@
 import React from 'react';
-import { Card, Form, Input, Switch } from 'antd';
+import { Card, Form, InputNumber, Switch } from 'antd';
 
 const AdvancedSettingsCard = () => {
   return (
-    <Card title="高级设置" className="content-card">
+    <Card title="请求日志" className="content-card">
       <Form.Item
-        label="全局响应模板"
-        name="globalResponseTemplating"
+        label="禁用请求日志"
+        name="requestJournalDisabled"
         valuePropName="checked"
-        extra="启用全局响应模板功能"
+        extra="对应 GlobalSettings.requestJournalDisabled，开启后不再记录任何请求"
       >
         <Switch />
       </Form.Item>
 
       <Form.Item
-        label="本地响应模板"
-        name="localResponseTemplating"
-        valuePropName="checked"
-        extra="启用本地响应模板功能"
+        label="请求日志最大条数"
+        name="maxRequestJournalEntries"
+        extra="对应 GlobalSettings.maxRequestJournalEntries"
       >
-        <Switch />
+        <InputNumber min={0} placeholder="不限制" style={{ width: '100%' }} />
       </Form.Item>
 
       <Form.Item
-        label="扩展设置"
-        name="extensions"
-        extra="扩展配置的 JSON 对象"
-      >
-        <Input.TextArea 
-          rows={4} 
-          placeholder='{"key": "value"}'
-        />
-      </Form.Item>
-
-      <Form.Item
-        label="启用浏览器代理"
-        name="browserProxyingEnabled"
+        label="隐藏启动横幅"
+        name="disableBanner"
         valuePropName="checked"
-        extra="允许作为浏览器代理使用"
+        extra="对应 GlobalSettings.disableBanner"
       >
         <Switch />
       </Form.Item>

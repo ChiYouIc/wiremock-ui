@@ -1,194 +1,113 @@
 import axios from 'axios';
+import { getActiveTarget, toAdminBaseUrl } from './targets';
 
-// 创建 axios 实例
+// 所有端点对齐 wiremock-admin-api.json（WireMock 3.12.2 契约）。
+// 该契约同时被 WireMock 4.x 接受，版本差异由 services/capabilities.js 在运行时处理。
+// baseURL 由「多实例」选择决定：留空走同源代理，否则直连目标（WireMock 的 /__admin 自带 CORS）。
 const api = axios.create({
-  baseURL: '/__admin',
-  timeout: 10000,
+  baseURL: toAdminBaseUrl(getActiveTarget()),
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// 请求拦截器
-api.interceptors.request.use(
-  (config) => {
-    console.log('发送请求:', config.method?.toUpperCase(), config.url);
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+export const applyTarget = (target) => {
+  api.defaults.baseURL = toAdminBaseUrl(target);
+};
 
-// 响应拦截器
+export const getApiBaseUrl = () => api.defaults.baseURL;
+
 api.interceptors.response.use(
-  (response) => {
-    console.log('收到响应:', response.status, response.config.url);
-    return response;
-  },
+  (response) => response,
   (error) => {
-    console.error('请求错误:', error.response?.status, error.config?.url, error.message);
+    const pointer = error.response?.data?.errors?.[0]?.source?.pointer;
+    console.error(
+      'WireMock API 错误:',
+      error.config?.method?.toUpperCase(),
+      error.config?.url,
+      error.response?.status,
+      pointer || '',
+      error.message
+    );
     return Promise.reject(error);
   }
 );
 
-// Stub Mappings API
+const patternBody = (pattern) => pattern || {};
+
+// ---------------- Stub Mappings ----------------
 export const stubMappingsApi = {
-  // 获取所有 stub mappings
-  getAll: (params = {}) => {
-    return api.get('/mappings', { params });
-  },
-
-  // 创建新的 stub mapping
-  create: (data) => {
-    return api.post('/mappings', data);
-  },
-
-  // 根据 ID 获取 stub mapping
-  getById: (id) => {
-    return api.get(`/mappings/${id}`);
-  },
-
-  // 更新 stub mapping
-  update: (id, data) => {
-    return api.put(`/mappings/${id}`, data);
-  },
-
-  // 删除 stub mapping
-  delete: (id) => {
-    return api.delete(`/mappings/${id}`);
-  },
-
-  // 删除所有 stub mappings
-  deleteAll: () => {
-    return api.delete('/mappings');
-  },
-
-  // 重置 stub mappings
-  reset: () => {
-    return api.post('/mappings/reset');
-  },
-
-  // 持久化 stub mappings
-  persist: () => {
-    return api.post('/mappings/save');
-  },
-
-  // 导入 stub mappings
-  import: (data) => {
-    return api.post('/mappings/import', data);
-  },
+  getAll: (params = {}) => api.get('/mappings', { params }),
+  getById: (id) => api.get(`/mappings/${id}`),
+  create: (data) => api.post('/mappings', data),
+  update: (id, data) => api.put(`/mappings/${id}`, data),
+  remove: (id) => api.delete(`/mappings/${id}`),
+  removeAll: () => api.delete('/mappings'),
+  reset: () => api.post('/mappings/reset'),
+  save: () => api.post('/mappings/save'),
+  import: (payload) => api.post('/mappings/import', payload),
+  findByMetadata: (pattern) => api.post('/mappings/find-by-metadata', patternBody(pattern)),
+  removeByMetadata: (pattern) => api.post('/mappings/remove-by-metadata', patternBody(pattern)),
+  getUnmatched: () => api.get('/mappings/unmatched'),
+  removeUnmatched: () => api.delete('/mappings/unmatched'),
 };
 
-// Requests API
+// ---------------- Requests ----------------
 export const requestsApi = {
-  // 获取所有请求记录
-  getAll: (params = {}) => {
-    return api.get('/requests', { params });
-  },
-
-  // 根据 ID 获取请求记录
-  getById: (id) => {
-    return api.get(`/requests/${id}`);
-  },
-
-  // 删除所有请求记录
-  deleteAll: () => {
-    return api.delete('/requests');
-  },
-
-  // 查找请求记录
-  find: (criteria) => {
-    return api.post('/requests/find', criteria);
-  },
-
-  // 获取未匹配的请求
-  getUnmatched: () => {
-    return api.get('/requests/unmatched');
-  },
-
-  // 获取请求计数
-  getCount: () => {
-    return api.get('/requests/count');
-  },
+  getAll: (params = {}) => api.get('/requests', { params }),
+  getById: (id) => api.get(`/requests/${id}`),
+  removeById: (id) => api.delete(`/requests/${id}`),
+  removeAll: () => api.delete('/requests'),
+  resetJournal: () => api.post('/requests/reset'),
+  count: (pattern) => api.post('/requests/count', patternBody(pattern)),
+  remove: (pattern) => api.post('/requests/remove', patternBody(pattern)),
+  removeByMetadata: (pattern) => api.post('/requests/remove-by-metadata', patternBody(pattern)),
+  find: (pattern) => api.post('/requests/find', patternBody(pattern)),
+  getUnmatched: () => api.get('/requests/unmatched'),
+  getNearMissesForUnmatched: () => api.get('/requests/unmatched/near-misses'),
 };
 
-// Settings API
-export const settingsApi = {
-  // 获取全局设置
-  getGlobal: () => {
-    return api.get('/settings');
-  },
-
-  // 更新全局设置
-  updateGlobal: (settings) => {
-    return api.post('/settings', settings);
-  },
-
-  // 重置设置
-  reset: () => {
-    return api.post('/settings/reset');
-  },
+// ---------------- Near misses ----------------
+export const nearMissesApi = {
+  forRequest: (loggedRequest) => api.post('/near-misses/request', loggedRequest),
+  forRequestPattern: (pattern) => api.post('/near-misses/request-pattern', pattern),
 };
 
-// Scenarios API
+// ---------------- Recordings ----------------
+export const recordingsApi = {
+  start: (recordSpec) => api.post('/recordings/start', recordSpec),
+  stop: () => api.post('/recordings/stop'),
+  status: () => api.get('/recordings/status'),
+  snapshot: (recordSpec) => api.post('/recordings/snapshot', recordSpec),
+};
+
+// ---------------- Scenarios ----------------
 export const scenariosApi = {
-  // 获取所有场景
-  getAll: () => {
-    return api.get('/scenarios');
-  },
-
-  // 重置所有场景
-  resetAll: () => {
-    return api.post('/scenarios/reset');
-  },
-
-  // 重置特定场景
-  reset: (name) => {
-    return api.put(`/scenarios/${name}/reset`);
-  },
+  getAll: () => api.get('/scenarios'),
+  resetAll: () => api.post('/scenarios/reset'),
 };
 
-// System API
+// ---------------- Files ----------------
+export const filesApi = {
+  list: () => api.get('/files'),
+  get: (name) => api.get(`/files/${encodeURIComponent(name)}`, { responseType: 'text' }),
+  put: (name, content) =>
+    api.put(`/files/${encodeURIComponent(name)}`, content, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+    }),
+  remove: (name) => api.delete(`/files/${encodeURIComponent(name)}`),
+};
+
+// ---------------- System ----------------
 export const systemApi = {
-  // 获取系统信息
-  getInfo: () => {
-    return api.get('/');
-  },
-
-  // 健康检查
-  health: () => {
-    return api.get('/health');
-  },
-
-  // 关闭服务器
-  shutdown: () => {
-    return api.post('/shutdown');
-  },
+  getVersion: () => api.get('/version'),
+  getHealth: () => api.get('/health'),
+  // 仅在 WireMock 4.x 存在，3.x 返回 404
+  getSettings: () => api.get('/settings'),
+  updateSettings: (body) => api.post('/settings', body),
+  resetAll: () => api.post('/reset'),
+  shutdown: () => api.post('/shutdown'),
 };
 
-// 录制和回放 API
-export const recordingApi = {
-  // 开始录制
-  start: (config) => {
-    return api.post('/recordings/start', config);
-  },
-
-  // 停止录制
-  stop: () => {
-    return api.post('/recordings/stop');
-  },
-
-  // 获取录制状态
-  getStatus: () => {
-    return api.get('/recordings/status');
-  },
-
-  // 快照录制
-  snapshot: (config) => {
-    return api.post('/recordings/snapshot', config);
-  },
-};
-
-// 导出默认 API 实例
 export default api;

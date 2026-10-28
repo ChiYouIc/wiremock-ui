@@ -4,97 +4,88 @@ import { PlayCircleOutlined } from '@ant-design/icons';
 
 const StartRecordingCard = ({ form, onStartRecording, isRecording, loading }) => {
   return (
-    <Card 
+    <Card
       title={
         <Space>
           <PlayCircleOutlined />
-          开始录制
+          开始录制（代理模式）
         </Space>
       }
       className="content-card"
     >
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={onStartRecording}
-        disabled={isRecording}
-      >
+      <Form form={form} layout="vertical" onFinish={onStartRecording} disabled={isRecording}>
         <Form.Item
-          label="目标 URL"
-          name="targetUrl"
-          rules={[{ required: true, message: '请输入目标 URL' }]}
-          extra="要录制的真实 API 服务地址"
+          label="目标服务 URL"
+          name="targetBaseUrl"
+          rules={[{ required: true, type: 'url', message: '请输入合法的目标 URL' }]}
+          extra="对应 record-spec.targetBaseUrl，请求会被代理到该地址并生成映射"
         >
           <Input placeholder="https://api.example.com" />
         </Form.Item>
 
         <Form.Item
-          label="URL 模式"
-          name="urlPattern"
-          extra="正则表达式，用于过滤要录制的 URL"
+          label="URL 路径正则过滤"
+          name="urlPathPattern"
+          extra="对应 filters.urlPathPattern，留空表示全部录制"
         >
-          <Input placeholder=".*" />
-        </Form.Item>
-
-        <Form.Item
-          label="HTTP 方法"
-          name="method"
-        >
-          <Input placeholder="ANY" />
-        </Form.Item>
-
-        <Form.Item
-          label="请求体模式"
-          name="requestBodyPattern"
-          extra="用于匹配请求体的模式"
-        >
-          <Input placeholder="可选" />
-        </Form.Item>
-
-        <Form.Item
-          label="转换器"
-          name="transformers"
-          extra="逗号分隔的转换器列表"
-        >
-          <Input placeholder="response-template,modify-response-header" />
+          <Input placeholder="/api/.*" />
         </Form.Item>
 
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item
-              label="捕获请求头"
-              name="captureHeaders"
-              valuePropName="checked"
-              initialValue={true}
+              label="HTTP 方法过滤"
+              name="method"
+              extra="留空表示不限；非法值（如 ANY）不会下发"
             >
-              <Switch />
+              <Input placeholder="GET" />
             </Form.Item>
           </Col>
           <Col span={12}>
             <Form.Item
-              label="持久化映射"
-              name="persist"
+              label="请求体匹配器"
+              name="requestBodyPatternMatcher"
+              extra="对应 requestBodyPattern.matcher"
+            >
+              <Input placeholder="equalToJson" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          label="捕获的请求头"
+          name="captureHeaders"
+          extra="逗号分隔；对应 captureHeaders 对象，留空表示不捕获"
+        >
+          <Input placeholder="Accept, Content-Type" />
+        </Form.Item>
+
+        <Form.Item label="转换器" name="transformers" extra="逗号分隔的转换器名称">
+          <Input placeholder="response-template,modify-response-header" />
+        </Form.Item>
+
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item label="持久化映射" name="persist" valuePropName="checked" initialValue={true}>
+              <Switch />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item
+              label="重复请求转场景"
+              name="repeatsAsScenarios"
               valuePropName="checked"
-              initialValue={true}
+              initialValue={false}
             >
               <Switch />
             </Form.Item>
           </Col>
         </Row>
 
-        <Form.Item
-          label="重复请求作为场景"
-          name="repeatsAsScenarios"
-          valuePropName="checked"
-          extra="将重复的请求转换为场景"
-        >
-          <Switch />
-        </Form.Item>
-
         <Form.Item>
-          <Button 
-            type="primary" 
-            htmlType="submit" 
+          <Button
+            type="primary"
+            htmlType="submit"
             icon={<PlayCircleOutlined />}
             loading={loading}
             disabled={isRecording}

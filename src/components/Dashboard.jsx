@@ -1,335 +1,669 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Typography, Alert, Button, Space, Divider, message } from 'antd';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Card,
+  Row,
+  Col,
+  Statistic,
+  Typography,
+  Alert,
+  Button,
+  Space,
+  message,
+  Tag,
+  Table,
+  Progress,
+  Switch,
+  Empty,
+  Tooltip,
+} from 'antd';
 import {
   ApiOutlined,
   HistoryOutlined,
-  CheckCircleOutlined,
   ExclamationCircleOutlined,
   ReloadOutlined,
   PlayCircleOutlined,
-  SettingOutlined,
+  FolderOpenOutlined,
   LinkOutlined,
   CopyOutlined,
+  CheckCircleOutlined,
+  AimOutlined,
+  DeleteOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { stubMappingsApi, requestsApi, systemApi } from '../services/wiremockApi';
+import {
+  stubMappingsApi,
+  requestsApi,
+  scenariosApi,
+  filesApi,
+  recordingsApi,
+  systemApi,
+} from '../services/wiremockApi';
+import { showApiError } from '../services/wiremockErrors';
 
-const { Title, Paragraph, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 
-const Dashboard = ({ connectionStatus }) => {
+const RECENT_REQUEST_LIMIT = 200;
+
+const METHOD_COLORS = {
+  GET: '#1677ff',
+  POST: '#52c41a',
+  PUT: '#fa8c16',
+  DELETE: '#ff4d4f',
+  PATCH: '#722ed1',
+  HEAD: '#13c2c2',
+  OPTIONS: '#eb2f96',
+};
+
+const STATUS_COLORS = {
+  '2xx': '#52c41a',
+  '3xx': '#1677ff',
+  '4xx': '#fa8c16',
+  '5xx': '#ff4d4f',
+  无响应: '#d9d9d9',
+};
+
+const formatUptime = (seconds) => {
+  if (typeof seconds !== 'number') return '-';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days} 天 ${hours} 小时`;
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+  if (minutes > 0) return `${minutes} 分`;
+  return `${seconds} 秒`;
+};
+
+const pathOf = (url = '') => url.split('?')[0] || '/';
+
+const statusBucket = (status) => {
+  if (!status) return '无响应';
+  const bucket = Math.floor(status / 100);
+  return bucket >= 2 && bucket <= 5 ? `${bucket}xx` : '无响应';
+};
+
+const DistBar = ({ label, value, total, color }) => {
+  const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="dist-row">
+      <span className="dist-label">{label}</span>
+      <div className="dist-track">
+        <div className="dist-fill" style={{ width: `${percent}%`, background: color }} />
+      </div>
+      <span className="dist-value">
+        {value}
+        <Text type="secondary" style={{ fontSize: 12, marginLeft: 4 }}>
+          {percent}%
+        </Text>
+      </span>
+    </div>
+  );
+};
+
+const Dashboard = ({ capabilities }) => {
   const navigate = useNavigate();
-  const [stats, setStats] = useState({
-    totalMappings: 0,
-    totalRequests: 0,
-    unmatchedRequests: 0,
-    loading: true,
+  const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [data, setData] = useState({
+    mappings: [],
+    unmatchedMappings: 0,
+    requests: [],
+    unmatchedRequests: [],
+    journal: { count: 0, requestJournalDisabled: false },
+    scenarios: [],
+    files: [],
+    recordingStatus: null,
+    health: null,
   });
-  const [systemInfo, setSystemInfo] = useState(null);
 
-  // Mock服务域名
-  const mockServiceUrl = 'http://os.wiremock.server.qa.17u.cn';
+  const mockServiceUrl = window.location.origin;
 
-  const fetchStats = async () => {
-    try {
-      setStats(prev => ({ ...prev, loading: true }));
-      
-      const [mappingsRes, requestsRes, unmatchedRes, systemRes] = await Promise.allSettled([
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    const [mappings, unmatchedMappings, requests, unmatched, journal, scenarios, files, recording, health] =
+      await Promise.allSettled([
         stubMappingsApi.getAll(),
-        requestsApi.getAll(),
+        stubMappingsApi.getUnmatched(),
+        requestsApi.getAll({ limit: RECENT_REQUEST_LIMIT }),
         requestsApi.getUnmatched(),
-        systemApi.getInfo(),
+        requestsApi.count(),
+        scenariosApi.getAll(),
+        filesApi.list(),
+        recordingsApi.status(),
+        systemApi.getHealth(),
       ]);
 
-      // 处理映射数据
-      let totalMappings = 0;
-      if (mappingsRes.status === 'fulfilled') {
-        const mappingsData = mappingsRes.value.data;
-        totalMappings = mappingsData.mappings?.length || 
-                      (Array.isArray(mappingsData) ? mappingsData.length : 0);
-      }
+    const pick = (result, fallback) =>
+      result.status === 'fulfilled' ? result.value.data : fallback;
+    const arrayOf = (result, key) => {
+      const value = pick(result, null);
+      return Array.isArray(value?.[key]) ? value[key] : [];
+    };
 
-      // 处理请求数据
-      let totalRequests = 0;
-      if (requestsRes.status === 'fulfilled') {
-        const requestsData = requestsRes.value.data;
-        totalRequests = requestsData.requests?.length || 
-                       (Array.isArray(requestsData) ? requestsData.length : 0);
-      }
+    const filesData = pick(files, []);
 
-      // 处理未匹配请求数据
-      let unmatchedRequests = 0;
-      if (unmatchedRes.status === 'fulfilled') {
-        const unmatchedData = unmatchedRes.value.data;
-        unmatchedRequests = unmatchedData.requests?.length || 
-                           (Array.isArray(unmatchedData) ? unmatchedData.length : 0);
-      }
+    setData({
+      mappings: arrayOf(mappings, 'mappings'),
+      unmatchedMappings: pick(unmatchedMappings, { meta: {} })?.meta?.total ?? 0,
+      requests: arrayOf(requests, 'requests'),
+      unmatchedRequests: arrayOf(unmatched, 'requests'),
+      journal: pick(journal, { count: 0, requestJournalDisabled: false }) || {},
+      scenarios: arrayOf(scenarios, 'scenarios'),
+      files: Array.isArray(filesData) ? filesData : [],
+      recordingStatus: pick(recording, null)?.status || null,
+      health: pick(health, null),
+    });
+    setUpdatedAt(new Date());
+    setLoading(false);
 
-      // 处理系统信息
-      if (systemRes.status === 'fulfilled') {
-        setSystemInfo(systemRes.value.data);
-      }
-
-      setStats({
-        totalMappings,
-        totalRequests,
-        unmatchedRequests,
-        loading: false,
-      });
-    } catch (error) {
-      console.error('获取统计数据失败:', error);
-      setStats(prev => ({ ...prev, loading: false }));
+    const failed = [mappings, unmatchedMappings, requests, journal].filter(
+      (result) => result.status === 'rejected'
+    );
+    if (failed.length > 0) {
+      showApiError(failed[0].reason, '部分数据获取失败');
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (connectionStatus === 'connected') {
-      fetchStats();
-    }
-  }, [connectionStatus]);
+    if (!capabilities?.reachable) return;
+    fetchAll();
+  }, [capabilities?.reachable, fetchAll]);
 
-  const handleRefresh = () => {
-    fetchStats();
-  };
+  useEffect(() => {
+    if (!autoRefresh || !capabilities?.reachable) return undefined;
+    const timer = setInterval(() => {
+      if (!document.hidden) fetchAll();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [autoRefresh, capabilities?.reachable, fetchAll]);
+
+  const stats = useMemo(() => {
+    const totalRequests = data.journal?.count ?? data.requests.length;
+    const unmatchedCount = data.unmatchedRequests.length;
+    const matchedRate =
+      totalRequests > 0
+        ? Math.max(0, ((totalRequests - unmatchedCount) / totalRequests) * 100)
+        : null;
+
+    const methodCounts = {};
+    data.requests.forEach((record) => {
+      const method = record.request?.method || 'OTHER';
+      methodCounts[method] = (methodCounts[method] || 0) + 1;
+    });
+
+    const statusCounts = { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0, 无响应: 0 };
+    data.requests.forEach((record) => {
+      const status = record.response?.status ?? record.responseDefinition?.status;
+      statusCounts[statusBucket(status)] += 1;
+    });
+
+    const mappingNames = {};
+    data.mappings.forEach((mapping) => {
+      const request = mapping.request || {};
+      mappingNames[mapping.id] =
+        mapping.name ||
+        `${request.method || ''} ${request.urlPath || request.urlPathPattern || request.url || ''}`.trim();
+    });
+
+    const stubHits = {};
+    data.requests.forEach((record) => {
+      const stub = record.stubMapping;
+      if (!stub?.id) return;
+      // 未命中时 WireMock 会塞一个 response.fromConfiguredStub=false 的占位映射，需要排除
+      const matched =
+        typeof record.wasMatched === 'boolean'
+          ? record.wasMatched
+          : stub.response?.fromConfiguredStub !== false;
+      if (!matched) return;
+
+      if (!stubHits[stub.id]) {
+        const request = stub.request || {};
+        stubHits[stub.id] = {
+          id: stub.id,
+          name:
+            mappingNames[stub.id] ||
+            stub.name ||
+            `${request.method || ''} ${request.urlPath || request.urlPathPattern || request.url || ''}`.trim() ||
+            stub.id.slice(0, 8),
+          count: 0,
+        };
+      }
+      stubHits[stub.id].count += 1;
+    });
+
+    const unmatchedUrls = {};
+    data.unmatchedRequests.forEach((record) => {
+      // /requests/unmatched 返回的是扁平的 logged request，而不是 { request: ... } 包装
+      const request = record.request || record;
+      const key = `${request.method || 'ANY'} ${pathOf(request.url)}`;
+      unmatchedUrls[key] = (unmatchedUrls[key] || 0) + 1;
+    });
+
+    const nonStartedScenarios = data.scenarios.filter(
+      (scenario) => scenario.state && scenario.state !== 'Started'
+    );
+
+    return {
+      totalMappings: data.mappings.length,
+      totalRequests,
+      unmatchedCount,
+      matchedRate,
+      methodCounts,
+      statusCounts,
+      sampleSize: data.requests.length,
+      topStubs: Object.values(stubHits)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5),
+      topUnmatchedUrls: Object.entries(unmatchedUrls)
+        .map(([key, count]) => ({ key, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5),
+      staleStubs: data.unmatchedMappings,
+      scenarioCount: data.scenarios.length,
+      nonStartedCount: nonStartedScenarios.length,
+      fileCount: data.files.length,
+      isRecording: data.recordingStatus === 'Recording',
+      journalDisabled: Boolean(data.journal?.requestJournalDisabled),
+    };
+  }, [data]);
 
   const handleCopyUrl = () => {
-    navigator.clipboard.writeText(mockServiceUrl).then(() => {
-      message.success('Mock服务地址已复制到剪贴板');
-    }).catch(() => {
-      message.error('复制失败，请手动复制');
-    });
+    navigator.clipboard
+      .writeText(mockServiceUrl)
+      .then(() => message.success('Mock 服务地址已复制'))
+      .catch(() => message.error('复制失败，请手动复制'));
   };
 
-  const getStatusAlert = () => {
-    if (connectionStatus === 'connected') {
-      return (
-        <Alert
-          message="WireMock 服务运行正常"
-          description="所有功能可正常使用"
-          type="success"
-          icon={<CheckCircleOutlined />}
-          showIcon
-        />
-      );
-    } else {
-      return (
-        <Alert
-          message="WireMock 服务连接失败"
-          description="请确保 WireMock 服务正在运行并监听正确的端口"
-          type="error"
-          icon={<ExclamationCircleOutlined />}
-          showIcon
-          action={
-            <Button size="small" danger onClick={handleRefresh}>
-              重试连接
-            </Button>
-          }
-        />
-      );
+  const handleClearStaleStubs = async () => {
+    try {
+      await stubMappingsApi.removeUnmatched();
+      message.success('已清理从未命中的映射');
+      fetchAll();
+    } catch (error) {
+      showApiError(error, '清理失败');
     }
   };
 
-  return (
-    <div className="fade-in">
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <Title level={2} style={{ margin: 0 }}>
-              仪表板
-            </Title>
-            <Paragraph style={{ margin: '8px 0 0 0', color: '#666' }}>
-              WireMock 服务状态和统计信息
-            </Paragraph>
-          </div>
-          <Button 
-            icon={<ReloadOutlined />} 
-            onClick={handleRefresh}
-            loading={stats.loading}
-          >
-            刷新数据
-          </Button>
-        </div>
-      </div>
-
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        {getStatusAlert()}
-
-        {/* Mock服务地址卡片 */}
-        <Card 
-          title={
-            <Space>
-              <LinkOutlined style={{ color: '#1890ff' }} />
-              <span>Mock服务地址</span>
-            </Space>
-          } 
-          className="content-card"
-          extra={
-            <Button 
-              icon={<CopyOutlined />} 
-              size="small" 
-              onClick={handleCopyUrl}
-            >
-              复制地址
+  if (!capabilities?.reachable) {
+    return (
+      <div className="fade-in">
+        <Alert
+          type="error"
+          showIcon
+          message="未连接到 WireMock"
+          description="请确认 WireMock 已在 8080 端口启动，且 /__admin 代理可用。"
+          action={
+            <Button size="small" onClick={() => window.location.reload()}>
+              重试
             </Button>
           }
-        >
-          <div style={{ 
-            padding: '16px', 
-            backgroundColor: '#f6f8fa', 
-            borderRadius: '6px',
-            border: '1px solid #e1e4e8'
-          }}>
-            <Text 
-              code 
-              style={{ 
-                fontSize: '16px', 
-                fontWeight: 'bold',
-                color: '#1890ff'
+        />
+      </div>
+    );
+  }
+
+  const recentColumns = [
+    {
+      title: '方法',
+      dataIndex: ['request', 'method'],
+      key: 'method',
+      width: 74,
+      render: (method) => <Tag color={METHOD_COLORS[method] || 'default'}>{method || 'ANY'}</Tag>,
+    },
+    {
+      title: 'URL',
+      key: 'url',
+      ellipsis: true,
+      render: (_, record) => <Text code>{record.request?.url || '-'}</Text>,
+    },
+    {
+      title: '状态',
+      key: 'status',
+      width: 74,
+      render: (_, record) => {
+        const status = record.response?.status ?? record.responseDefinition?.status;
+        const color = status >= 400 ? 'red' : status >= 300 ? 'blue' : 'green';
+        return status ? <Tag color={color}>{status}</Tag> : <Tag>无</Tag>;
+      },
+    },
+    {
+      title: '命中',
+      key: 'matched',
+      width: 74,
+      render: (_, record) => {
+        const matched =
+          typeof record.wasMatched === 'boolean'
+            ? record.wasMatched
+            : Boolean(record.stubMapping?.id);
+        return <Tag color={matched ? 'green' : 'red'}>{matched ? '是' : '否'}</Tag>;
+      },
+    },
+  ];
+
+  const attention =
+    stats.staleStubs > 0 || stats.unmatchedCount > 0 || stats.nonStartedCount > 0;
+
+  return (
+    <div className="fade-in page-stack">
+      <div className="page-header dashboard-header">
+        <div>
+          <Title level={2} style={{ margin: 0 }}>
+            仪表板
+          </Title>
+          <Text type="secondary">
+            WireMock 服务总览
+            {updatedAt && ` · 最后更新 ${updatedAt.toLocaleTimeString('zh-CN')}`}
+          </Text>
+        </div>
+        <Space wrap>
+          <Space size={6}>
+            <Switch size="small" checked={autoRefresh} onChange={setAutoRefresh} />
+            <Text type="secondary">自动刷新 15s</Text>
+          </Space>
+          <Button icon={<ReloadOutlined />} onClick={fetchAll} loading={loading}>
+            刷新
+          </Button>
+        </Space>
+      </div>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} xl={6}>
+          <Card className="content-card">
+            <Statistic
+              title="Stub 映射"
+              value={stats.totalMappings}
+              prefix={<ApiOutlined />}
+              loading={loading}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card className="content-card">
+            <Statistic
+              title="请求记录"
+              value={stats.totalRequests}
+              prefix={<HistoryOutlined />}
+              loading={loading}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card className="content-card">
+            <Statistic
+              title="未匹配请求"
+              value={stats.unmatchedCount}
+              prefix={<ExclamationCircleOutlined />}
+              valueStyle={{ color: stats.unmatchedCount > 0 ? '#cf1322' : '#3f8600' }}
+              loading={loading}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} xl={6}>
+          <Card className="content-card">
+            <Statistic
+              title="匹配率"
+              value={stats.matchedRate === null ? '-' : stats.matchedRate}
+              precision={stats.matchedRate === null ? undefined : 1}
+              suffix={stats.matchedRate === null ? '' : '%'}
+              prefix={<CheckCircleOutlined />}
+              valueStyle={{
+                color:
+                  stats.matchedRate === null
+                    ? undefined
+                    : stats.matchedRate >= 90
+                      ? '#3f8600'
+                      : stats.matchedRate >= 60
+                        ? '#d48806'
+                        : '#cf1322',
               }}
-            >
-              {mockServiceUrl}
-            </Text>
-          </div>
-          <Paragraph style={{ marginTop: '12px', marginBottom: 0, color: '#666' }}>
-            这是您的Mock服务对外访问地址，可以用于API测试和集成。
-          </Paragraph>
-        </Card>
+              loading={loading}
+            />
+          </Card>
+        </Col>
+      </Row>
 
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={12} lg={6}>
-            <Card className="content-card">
-              <Statistic
-                title="Stub 映射总数"
-                value={stats.totalMappings}
-                prefix={<ApiOutlined style={{ color: '#1890ff' }} />}
-                loading={stats.loading}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card className="content-card">
-              <Statistic
-                title="请求记录总数"
-                value={stats.totalRequests}
-                prefix={<HistoryOutlined style={{ color: '#52c41a' }} />}
-                loading={stats.loading}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card className="content-card">
-              <Statistic
-                title="未匹配请求"
-                value={stats.unmatchedRequests}
-                prefix={<ExclamationCircleOutlined style={{ color: '#fa8c16' }} />}
-                loading={stats.loading}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card className="content-card">
-              <Statistic
-                title="匹配成功率"
-                value={stats.totalRequests > 0 ? 
-                  Math.round(((stats.totalRequests - stats.unmatchedRequests) / stats.totalRequests) * 100) : 0
-                }
-                suffix="%"
-                prefix={<CheckCircleOutlined style={{ color: '#722ed1' }} />}
-                loading={stats.loading}
-              />
-            </Card>
-          </Col>
-        </Row>
+      <div className="card-flow">
+          <Card title="运行状态" className="content-card" loading={loading}>
+            <div className="status-grid">
+              <div>
+                <Text type="secondary">版本</Text>
+                <div>
+                  <Tag color="blue">{capabilities.version || data.health?.version || '未知'}</Tag>
+                </div>
+              </div>
+              <div>
+                <Text type="secondary">运行时长</Text>
+                <div>
+                  <ClockCircleOutlined /> {formatUptime(data.health?.uptimeInSeconds)}
+                </div>
+              </div>
+              <div>
+                <Text type="secondary">录制</Text>
+                <div>{stats.isRecording ? <Tag color="red">录制中</Tag> : <Tag>未录制</Tag>}</div>
+              </div>
+              <div>
+                <Text type="secondary">请求日志</Text>
+                <div>
+                  {stats.journalDisabled ? (
+                    <Tag color="orange">已关闭</Tag>
+                  ) : (
+                    <Tag color="green">记录中</Tag>
+                  )}
+                </div>
+              </div>
+              <div>
+                <Text type="secondary">场景</Text>
+                <div>
+                  {stats.scenarioCount} 个
+                  {stats.nonStartedCount > 0 && (
+                    <Tag color="purple" style={{ marginLeft: 6 }}>
+                      {stats.nonStartedCount} 个已流转
+                    </Tag>
+                  )}
+                </div>
+              </div>
+              <div>
+                <Text type="secondary">文件（__files）</Text>
+                <div>{stats.fileCount} 个</div>
+              </div>
+            </div>
+            <div className="status-url">
+              <Text type="secondary">Mock 地址</Text>
+              <Space>
+                <Text code>{mockServiceUrl}</Text>
+                <Button size="small" type="text" icon={<CopyOutlined />} onClick={handleCopyUrl} />
+              </Space>
+            </div>
+          </Card>
 
-        <Card title="系统信息" className="content-card">
-          <Row gutter={[16, 16]}>
-            <Col xs={24} md={12}>
-              <div>
-                <strong>版本:</strong> {systemInfo?.version || 'WireMock 2.x'}
-              </div>
-              <Divider />
-              <div>
-                <strong>状态:</strong> 
-                <span className={connectionStatus === 'connected' ? 'status-active' : 'status-inactive'}>
-                  {connectionStatus === 'connected' ? '运行中' : '未连接'}
-                </span>
-              </div>
-            </Col>
-            <Col xs={24} md={12}>
-              <div>
-                <strong>管理端口:</strong> {systemInfo?.port || '8080'}
-              </div>
-              <Divider />
-              <div>
-                <strong>服务端口:</strong> {systemInfo?.port || '8080'}
-              </div>
-            </Col>
-          </Row>
-        </Card>
+          <Card
+            title={
+              <Space>
+                需要关注
+                {attention && <Tag color="orange">有待处理项</Tag>}
+              </Space>
+            }
+            className="content-card"
+            loading={loading}
+          >
+            {!attention ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="一切正常：没有未匹配请求，也没有从未命中的映射"
+              />
+            ) : (
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {stats.staleStubs > 0 && (
+                  <div className="attention-row">
+                    <div>
+                      <Text strong>{stats.staleStubs}</Text> 个映射从未命中过请求
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          可能是配置有误，或已过期的旧桩
+                        </Text>
+                      </div>
+                    </div>
+                    <Button size="small" icon={<DeleteOutlined />} onClick={handleClearStaleStubs}>
+                      清理
+                    </Button>
+                  </div>
+                )}
 
-        <Card title="快速操作" className="content-card">
-          <Row gutter={[16, 16]}>
-            <Col xs={24} sm={8}>
-              <Button 
-                type="primary" 
-                icon={<ApiOutlined />} 
-                size="large" 
-                block
-                onClick={() => navigate('/stub-mappings')}
-              >
-                管理 Stub 映射
+                {stats.unmatchedCount > 0 && (
+                  <div className="attention-row">
+                    <div>
+                      <Text strong>{stats.unmatchedCount}</Text> 个请求没有命中任何映射
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          Top 未匹配：
+                          {stats.topUnmatchedUrls.length > 0
+                            ? stats.topUnmatchedUrls.map((item) => item.key).join('、')
+                            : '—'}
+                        </Text>
+                      </div>
+                    </div>
+                    <Button size="small" icon={<AimOutlined />} onClick={() => navigate('/near-misses')}>
+                      去排查
+                    </Button>
+                  </div>
+                )}
+
+                {stats.nonStartedCount > 0 && (
+                  <div className="attention-row">
+                    <div>
+                      <Text strong>{stats.nonStartedCount}</Text> 个场景已离开初始状态
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          状态机仍在流转，必要时可重置
+                        </Text>
+                      </div>
+                    </div>
+                    <Button size="small" onClick={() => navigate('/scenarios')}>
+                      查看
+                    </Button>
+                  </div>
+                )}
+              </Space>
+            )}
+          </Card>
+
+          <Card
+            title="最近请求"
+            className="content-card"
+            extra={
+              <Button type="link" size="small" onClick={() => navigate('/requests')}>
+                查看全部
               </Button>
-            </Col>
-            <Col xs={24} sm={8}>
-              <Button 
-                icon={<HistoryOutlined />} 
-                size="large" 
-                block
-                onClick={() => navigate('/requests')}
-              >
-                查看请求记录
+            }
+            loading={loading}
+          >
+            <Table
+              size="small"
+              rowKey="id"
+              columns={recentColumns}
+              dataSource={data.requests.slice(0, 8)}
+              pagination={false}
+              locale={{ emptyText: '还没有请求记录' }}
+              onRow={(record) => ({
+                onClick: () => navigate('/requests', { state: { focusRequestId: record.id } }),
+                style: { cursor: 'pointer' },
+              })}
+            />
+          </Card>
+
+          <Card
+            title="请求分布"
+            className="content-card"
+            loading={loading}
+            extra={
+              <Tooltip title="基于最近拉取的请求日志样本">
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  样本 {stats.sampleSize} 条
+                </Text>
+              </Tooltip>
+            }
+          >
+            <div className="dist-section">
+              <Text strong>按方法</Text>
+              {Object.keys(METHOD_COLORS).map((method) => (
+                <DistBar
+                  key={method}
+                  label={method}
+                  value={stats.methodCounts[method] || 0}
+                  total={stats.sampleSize}
+                  color={METHOD_COLORS[method]}
+                />
+              ))}
+            </div>
+            <div className="dist-section">
+              <Text strong>按状态码</Text>
+              {Object.keys(STATUS_COLORS).map((bucket) => (
+                <DistBar
+                  key={bucket}
+                  label={bucket}
+                  value={stats.statusCounts[bucket] || 0}
+                  total={stats.sampleSize}
+                  color={STATUS_COLORS[bucket]}
+                />
+              ))}
+            </div>
+          </Card>
+
+          <Card title="Top 命中映射" className="content-card" loading={loading}>
+            {stats.topStubs.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无命中记录" />
+            ) : (
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {stats.topStubs.map((stub) => (
+                  <div key={stub.id} className="top-stub">
+                    <Text ellipsis style={{ maxWidth: '60%' }}>
+                      {stub.name}
+                    </Text>
+                    <Progress
+                      percent={Math.round((stub.count / stats.topStubs[0].count) * 100)}
+                      showInfo={false}
+                      size="small"
+                      style={{ width: 120 }}
+                    />
+                    <Text strong>{stub.count}</Text>
+                  </div>
+                ))}
+              </Space>
+            )}
+          </Card>
+
+          <Card title="快捷操作" className="content-card">
+            <Space wrap>
+              <Button icon={<ApiOutlined />} onClick={() => navigate('/stub-mappings')}>
+                映射管理
               </Button>
-            </Col>
-            <Col xs={24} sm={8}>
-              <Button 
-                icon={<PlayCircleOutlined />} 
-                size="large" 
-                block
-                onClick={() => navigate('/recording')}
-              >
+              <Button icon={<HistoryOutlined />} onClick={() => navigate('/requests')}>
+                请求记录
+              </Button>
+              <Button icon={<AimOutlined />} onClick={() => navigate('/near-misses')}>
+                Near-Miss 调试
+              </Button>
+              <Button icon={<PlayCircleOutlined />} onClick={() => navigate('/recording')}>
                 录制回放
               </Button>
-            </Col>
-          </Row>
-          <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-            <Col xs={24} sm={8}>
-              <Button 
-                icon={<SettingOutlined />} 
-                size="large" 
-                block
-                onClick={() => navigate('/settings')}
-              >
-                系统设置
+              <Button icon={<FolderOpenOutlined />} onClick={() => navigate('/files')}>
+                文件管理
               </Button>
-            </Col>
-          </Row>
-        </Card>
-
-        <Card title="使用说明" className="content-card">
-          <Paragraph>
-            <strong>WireMock UI</strong> 是一个现代化的 WireMock 可视化管理工具，提供以下功能：
-          </Paragraph>
-          <ul>
-            <li><strong>Stub 映射管理:</strong> 创建、编辑、删除和管理 API 模拟映射</li>
-            <li><strong>请求记录:</strong> 查看和分析所有传入的 HTTP 请求</li>
-            <li><strong>场景管理:</strong> 管理有状态的模拟场景</li>
-            <li><strong>录制回放:</strong> 录制真实 API 响应并生成 stub 映射</li>
-            <li><strong>系统设置:</strong> 配置 WireMock 服务参数</li>
-          </ul>
-          <Paragraph>
-            Mock服务地址: <Text code>{mockServiceUrl}</Text>
-          </Paragraph>
-        </Card>
-      </Space>
+              <Button
+                icon={<LinkOutlined />}
+                href={`${mockServiceUrl}/__admin/mappings`}
+                target="_blank"
+              >
+                原始 Admin API
+              </Button>
+            </Space>
+            <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
+              数据来自 Admin API 的实时聚合；「请求分布」与「Top 命中映射」基于最近{' '}
+              {RECENT_REQUEST_LIMIT} 条请求日志。
+            </Paragraph>
+          </Card>
+      </div>
     </div>
   );
 };

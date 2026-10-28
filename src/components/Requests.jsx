@@ -7,48 +7,46 @@ import {
   Input,
   Card,
   Drawer,
+  Select,
+  Switch,
   notification,
   Popconfirm,
-  Select,
 } from 'antd';
-import {
-  ReloadOutlined,
-  DeleteOutlined,
-  SearchOutlined,
-} from '@ant-design/icons';
+import { ReloadOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { requestsApi } from '../services/wiremockApi';
+import { showApiError } from '../services/wiremockErrors';
 import { createColumns } from './Requests/tableColumns.jsx';
 import { filterRequests } from './Requests/filterUtils';
 import RequestDetail from './Requests/RequestDetail';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
-const { Option } = Select;
 
 const Requests = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [requests, setRequests] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [methodFilter, setMethodFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [onlyUnmatched, setOnlyUnmatched] = useState(false);
 
-  // 获取所有请求记录
   const fetchRequests = async () => {
     setLoading(true);
     try {
       const response = await requestsApi.getAll();
-      // 处理不同的响应数据结构
-      const requestsData = response.data.requests || response.data || [];
-      setRequests(Array.isArray(requestsData) ? requestsData : []);
+      const list = Array.isArray(response.data?.requests) ? response.data.requests : [];
+      setRequests(list);
+      setTotal(response.data?.meta?.total ?? list.length);
     } catch (error) {
-      console.error('获取请求记录失败:', error);
-      notification.error({
-        message: '获取请求记录失败',
-        description: error.response?.data?.message || error.message || '网络连接错误',
-      });
-      setRequests([]); // 确保在错误时设置为空数组
+      showApiError(error, '获取请求记录失败');
+      setRequests([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -58,37 +56,43 @@ const Requests = () => {
     fetchRequests();
   }, []);
 
-  // 查看请求详情
+  // 从仪表板的「最近请求」跳转过来时，自动打开对应详情
+  const focusId = location.state?.focusRequestId;
+  useEffect(() => {
+    if (!focusId || requests.length === 0) return;
+    const record = requests.find((item) => item.id === focusId);
+    if (!record) return;
+    setSelectedRequest(record);
+    setDrawerVisible(true);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [focusId, requests, navigate, location.pathname]);
+
   const handleView = (record) => {
     setSelectedRequest(record);
     setDrawerVisible(true);
   };
 
-  // 清空所有请求记录
   const handleClearAll = async () => {
     try {
-      await requestsApi.deleteAll();
-      notification.success({
-        message: '清空成功',
-        description: '所有请求记录已被删除',
-      });
+      await requestsApi.removeAll();
+      notification.success({ message: '清空成功', description: '所有请求记录已被删除' });
       fetchRequests();
     } catch (error) {
-      notification.error({
-        message: '清空失败',
-        description: error.message,
-      });
+      showApiError(error, '清空失败');
     }
   };
 
-  // 创建表格列配置
   const columns = createColumns(handleView);
-
-  // 过滤请求
-  const filteredRequests = filterRequests(requests, searchText, methodFilter, statusFilter);
+  const filteredRequests = filterRequests(
+    requests,
+    searchText,
+    methodFilter,
+    statusFilter,
+    onlyUnmatched
+  );
 
   return (
-    <div className="fade-in">
+    <div className="fade-in page-stack">
       <div className="page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
@@ -107,34 +111,32 @@ const Requests = () => {
             allowClear
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            style={{ width: 300 }}
+            style={{ width: 280 }}
             prefix={<SearchOutlined />}
           />
           <Select
             placeholder="方法"
             allowClear
-            value={methodFilter}
-            onChange={setMethodFilter}
+            value={methodFilter || undefined}
+            onChange={(value) => setMethodFilter(value || '')}
             style={{ width: 120 }}
-          >
-            <Option value="GET">GET</Option>
-            <Option value="POST">POST</Option>
-            <Option value="PUT">PUT</Option>
-            <Option value="DELETE">DELETE</Option>
-            <Option value="PATCH">PATCH</Option>
-          </Select>
+            options={['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'].map((m) => ({
+              value: m,
+              label: m,
+            }))}
+          />
           <Select
             placeholder="状态码"
             allowClear
-            value={statusFilter}
-            onChange={setStatusFilter}
+            value={statusFilter || undefined}
+            onChange={(value) => setStatusFilter(value || '')}
             style={{ width: 120 }}
-          >
-            <Option value="2xx">2xx</Option>
-            <Option value="3xx">3xx</Option>
-            <Option value="4xx">4xx</Option>
-            <Option value="5xx">5xx</Option>
-          </Select>
+            options={['2xx', '3xx', '4xx', '5xx'].map((value) => ({ value, label: value }))}
+          />
+          <Space size={4}>
+            <Switch size="small" checked={onlyUnmatched} onChange={setOnlyUnmatched} />
+            <Text type="secondary">仅未匹配</Text>
+          </Space>
         </Space>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchRequests} loading={loading}>
@@ -157,22 +159,21 @@ const Requests = () => {
         <Table
           columns={columns}
           dataSource={filteredRequests}
-          rowKey={(record) => record.id || record.uuid || `${record.loggedDate}-${Math.random()}`}
+          rowKey={(record) => record.id}
           loading={loading}
           pagination={{
             total: filteredRequests.length,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 条记录`,
+            showTotal: (count) => `共 ${count} 条记录（服务端 total=${total}）`,
           }}
         />
       </Card>
 
-      {/* 查看请求详情抽屉 */}
       <Drawer
         title="请求详情"
         placement="right"
-        width={800}
+        width={860}
         open={drawerVisible}
         onClose={() => setDrawerVisible(false)}
       >

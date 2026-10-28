@@ -1,37 +1,33 @@
 import React from 'react';
-import { Card, Typography, Alert } from 'antd';
+import { Card, Typography, Space } from 'antd';
 
-const { Title } = Typography;
+const { Title, Paragraph, Text } = Typography;
 
-const RecordingInstructions = () => {
-  return (
-    <Card title="使用说明" className="content-card" style={{ marginTop: 16 }}>
+const RecordingInstructions = () => (
+  <Card className="content-card" title="录制说明">
+    <Space direction="vertical" size="small" style={{ width: '100%' }}>
       <div>
-        <Title level={4}>录制功能</Title>
-        <ul>
-          <li><strong>实时录制:</strong> 启动录制后，WireMock 会代理所有匹配的请求到目标服务器，并记录请求和响应</li>
-          <li><strong>自动生成映射:</strong> 录制的请求和响应会自动转换为 stub 映射</li>
-          <li><strong>过滤器:</strong> 可以使用 URL 模式和 HTTP 方法过滤要录制的请求</li>
-          <li><strong>场景支持:</strong> 重复的请求可以转换为有状态的场景</li>
-        </ul>
-
-        <Title level={4} style={{ marginTop: 24 }}>快照功能</Title>
-        <ul>
-          <li><strong>即时捕获:</strong> 立即向目标 API 发送请求并记录响应</li>
-          <li><strong>批量生成:</strong> 可以一次性为多个端点创建映射</li>
-          <li><strong>状态保存:</strong> 捕获 API 的当前状态作为基准</li>
-        </ul>
-
-        <Alert
-          message="注意事项"
-          description="录制功能需要目标 API 服务正常运行。请确保网络连接正常，并且有权限访问目标服务。"
-          type="info"
-          showIcon
-          style={{ marginTop: 16 }}
-        />
+        <Title level={5}>代理录制</Title>
+        <Paragraph type="secondary">
+          把待测应用的上游地址指向 WireMock，WireMock 会按 <Text code>targetBaseUrl</Text> 转发请求，
+          并在停止录制时把请求/响应转换成映射。
+        </Paragraph>
       </div>
-    </Card>
-  );
-};
+      <div>
+        <Title level={5}>快照录制</Title>
+        <Paragraph type="secondary">
+          快照只处理请求日志里已有的记录，不会主动发起上游调用，因此不需要目标 URL。
+        </Paragraph>
+      </div>
+      <div>
+        <Title level={5}>过滤条件</Title>
+        <Paragraph type="secondary">
+          <Text code>filters</Text> 是一个 request-pattern：<Text code>method</Text> 必须是纯大写字母，
+          不限方法时请留空而不是填 ANY。
+        </Paragraph>
+      </div>
+    </Space>
+  </Card>
+);
 
 export default RecordingInstructions;

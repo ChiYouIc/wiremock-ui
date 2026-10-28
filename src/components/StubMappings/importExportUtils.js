@@ -1,17 +1,18 @@
 import { notification } from 'antd';
 import { stubMappingsApi } from '../../services/wiremockApi';
+import { showApiError } from '../../services/wiremockErrors';
 
 // 导出映射
 export const handleExport = (mappings, selectedRowKeys) => {
   try {
     let exportMappings = mappings;
     let fileName = 'wiremock-mappings-all';
-    
+
     if (selectedRowKeys.length > 0) {
-      exportMappings = mappings.filter(mapping => selectedRowKeys.includes(mapping.id));
+      exportMappings = mappings.filter((mapping) => selectedRowKeys.includes(mapping.id));
       fileName = 'wiremock-mappings-selected';
     }
-    
+
     const dataStr = JSON.stringify({ mappings: exportMappings }, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
@@ -22,104 +23,64 @@ export const handleExport = (mappings, selectedRowKeys) => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    
+
     notification.success({
       message: '导出成功',
       description: `已导出 ${exportMappings.length} 个映射配置`,
     });
   } catch (error) {
-    notification.error({
-      message: '导出失败',
-      description: error.message,
-    });
+    showApiError(error, '导出失败');
   }
 };
 
-// 导入映射
+const extractMappings = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.mappings)) return payload.mappings;
+  if (payload && payload.request && payload.response) return [payload];
+  return [];
+};
+
+// 导入映射：使用规范提供的 POST /__admin/mappings/import
 export const handleImport = (file, fetchMappings) => {
-  // 验证文件类型
   if (!file.type.includes('json') && !file.name.endsWith('.json')) {
-    notification.error({
-      message: '文件类型错误',
-      description: '请选择 JSON 格式的文件',
-    });
+    notification.error({ message: '文件类型错误', description: '请选择 JSON 格式的文件' });
     return false;
   }
 
-  // 验证文件大小 (限制为 10MB)
   if (file.size > 10 * 1024 * 1024) {
-    notification.error({
-      message: '文件过大',
-      description: '文件大小不能超过 10MB',
-    });
+    notification.error({ message: '文件过大', description: '文件大小不能超过 10MB' });
     return false;
   }
 
   const reader = new FileReader();
   reader.onload = async (e) => {
+    let mappings;
     try {
-      const importData = JSON.parse(e.target.result);
-      
-      // 验证数据结构
-      if (!importData || (typeof importData !== 'object')) {
-        throw new Error('无效的文件格式');
-      }
+      mappings = extractMappings(JSON.parse(e.target.result));
+    } catch {
+      notification.error({ message: '导入失败', description: '文件不是合法的 JSON' });
+      return;
+    }
 
-      const importMappings = importData.mappings || (Array.isArray(importData) ? importData : [importData]);
-      
-      if (!Array.isArray(importMappings) || importMappings.length === 0) {
-        throw new Error('文件中没有找到有效的映射数据');
-      }
+    if (mappings.length === 0) {
+      notification.error({ message: '导入失败', description: '文件中没有找到有效的映射数据' });
+      return;
+    }
 
-      let successCount = 0;
-      let errorCount = 0;
-      
-      for (const mapping of importMappings) {
-        try {
-          // 清理映射数据
-          const cleanMapping = { ...mapping };
-          delete cleanMapping.id;
-          delete cleanMapping.uuid;
-          
-          // 验证必要字段
-          if (!cleanMapping.request || !cleanMapping.response) {
-            throw new Error('映射缺少必要的 request 或 response 字段');
-          }
-
-          await stubMappingsApi.create(cleanMapping);
-          successCount++;
-        } catch (mappingError) {
-          console.error('导入单个映射失败:', mappingError);
-          errorCount++;
-        }
-      }
-      
-      if (successCount > 0) {
-        notification.success({
-          message: '导入完成',
-          description: `成功导入 ${successCount} 个映射${errorCount > 0 ? `，失败 ${errorCount} 个` : ''}`,
-        });
-        fetchMappings();
-      } else {
-        notification.error({
-          message: '导入失败',
-          description: '所有映射都导入失败，请检查文件格式',
-        });
-      }
-    } catch (error) {
-      console.error('导入文件解析失败:', error);
-      notification.error({
-        message: '导入失败',
-        description: error.message || '文件格式错误或导入过程中出现问题',
+    try {
+      await stubMappingsApi.import({ mappings });
+      notification.success({
+        message: '导入完成',
+        description: `已导入 ${mappings.length} 个映射`,
       });
+      fetchMappings();
+    } catch (error) {
+      showApiError(error, '导入失败');
     }
   };
 
   reader.onerror = () => {
-    notification.error({
-      message: '文件读取失败',
-      description: '无法读取选择的文件',
-    });
+    notification.error({ message: '文件读取失败', description: '无法读取选择的文件' });
   };
 
   reader.readAsText(file);
@@ -129,17 +90,21 @@ export const handleImport = (file, fetchMappings) => {
 // 过滤映射
 export const filterMappings = (mappings, searchText) => {
   if (!searchText) return mappings;
-  
+
   const searchLower = searchText.toLowerCase();
-  return mappings.filter((mapping) => (
-    mapping.request?.urlPath?.toLowerCase().includes(searchLower) ||
-    mapping.request?.urlPathPattern?.toLowerCase().includes(searchLower) ||
-    mapping.request?.urlPattern?.toLowerCase().includes(searchLower) ||
-    mapping.request?.url?.toLowerCase().includes(searchLower) ||
-    mapping.request?.urlEqualTo?.toLowerCase().includes(searchLower) ||
-    mapping.request?.method?.toLowerCase().includes(searchLower) ||
-    mapping.name?.toLowerCase().includes(searchLower) ||
-    mapping.comment?.toLowerCase().includes(searchLower) ||
-    mapping.metadata?.wmui?.description?.toLowerCase().includes(searchLower)
-  ));
+  return mappings.filter((mapping) => {
+    const request = mapping.request || {};
+    const haystack = [
+      request.url,
+      request.urlPattern,
+      request.urlPath,
+      request.urlPathPattern,
+      request.method,
+      mapping.name,
+      mapping.scenarioName,
+      mapping.metadata?.wmui?.description,
+      mapping.metadata ? JSON.stringify(mapping.metadata) : '',
+    ];
+    return haystack.some((value) => typeof value === 'string' && value.toLowerCase().includes(searchLower));
+  });
 };

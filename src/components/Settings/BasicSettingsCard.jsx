@@ -1,56 +1,63 @@
 import React from 'react';
-import { Card, Form, InputNumber, Select, Switch } from 'antd';
-
-const { Option } = Select;
+import { Card, Form, InputNumber, Select, Row, Col } from 'antd';
 
 const BasicSettingsCard = () => {
+  const form = Form.useFormInstance();
+  const delayType = Form.useWatch('delayDistributionType', form) || 'none';
+
   return (
-    <Card title="基本设置" className="content-card">
+    <Card title="响应延时" className="content-card">
       <Form.Item
-        label="固定延迟 (毫秒)"
+        label="全局固定延时 (ms)"
         name="fixedDelay"
-        extra="为所有响应添加固定延迟时间"
+        extra="对应 GlobalSettings.fixedDelay"
       >
-        <InputNumber 
-          min={0} 
-          max={60000} 
-          placeholder="0" 
-          style={{ width: '100%' }}
+        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} />
+      </Form.Item>
+
+      <Form.Item
+        label="全局随机延时分布"
+        name="delayDistributionType"
+        extra="对应 GlobalSettings.delayDistribution（对象形态）"
+      >
+        <Select
+          options={[
+            { value: 'none', label: '不使用' },
+            { value: 'uniform', label: '均匀分布（lower/upper）' },
+            { value: 'lognormal', label: '对数正态（median/sigma）' },
+          ]}
         />
       </Form.Item>
 
-      <Form.Item
-        label="随机延迟分布"
-        name="delayDistribution"
-        extra="响应延迟的分布类型"
-      >
-        <Select placeholder="选择分布类型">
-          <Option value="uniform">均匀分布</Option>
-          <Option value="lognormal">对数正态分布</Option>
-        </Select>
-      </Form.Item>
+      {delayType === 'uniform' && (
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item label="下限 (ms)" name="delayLower">
+              <InputNumber min={0} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item label="上限 (ms)" name="delayUpper">
+              <InputNumber min={0} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+      )}
 
-      <Form.Item
-        label="启用请求日志"
-        name="requestJournalDisabled"
-        valuePropName="checked"
-        extra="是否记录所有传入的请求"
-      >
-        <Switch />
-      </Form.Item>
-
-      <Form.Item
-        label="最大请求日志条数"
-        name="maxRequestJournalEntries"
-        extra="请求日志的最大保存数量"
-      >
-        <InputNumber 
-          min={0} 
-          max={10000} 
-          placeholder="1000" 
-          style={{ width: '100%' }}
-        />
-      </Form.Item>
+      {delayType === 'lognormal' && (
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item label="median" name="delayMedian">
+              <InputNumber min={1} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item label="sigma" name="delaySigma">
+              <InputNumber min={0.01} step={0.01} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+      )}
     </Card>
   );
 };

@@ -1,40 +1,38 @@
 import React from 'react';
-import { Card, Typography, Alert } from 'antd';
+import { Card, Typography, Divider, Space, Tag } from 'antd';
 
-const { Title } = Typography;
+const { Title, Paragraph, Text } = Typography;
 
-const SettingsInstructions = () => {
-  return (
-    <Card title="设置说明" className="content-card" style={{ marginTop: 16 }}>
-      <Alert
-        message="重要提示"
-        description="某些设置更改可能需要重启 WireMock 服务才能生效。请在更改关键设置后重启服务。"
-        type="warning"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
+const SettingsInstructions = () => (
+  <Card className="content-card" title="设置说明">
+    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+      <div>
+        <Title level={5}>写入接口</Title>
+        <Paragraph type="secondary" style={{ marginBottom: 4 }}>
+          统一通过 <Text code>POST /__admin/settings</Text> 提交，只提交本项目支持的
+          GlobalSettings 字段，避免把前端未识别的键写进服务端。
+        </Paragraph>
+      </div>
 
       <div>
-        <Title level={4}>设置项说明</Title>
-        <ul>
-          <li><strong>固定延迟:</strong> 为所有响应添加固定的延迟时间，用于模拟网络延迟</li>
-          <li><strong>请求日志:</strong> 控制是否记录传入的请求，以及最大记录数量</li>
-          <li><strong>响应模板:</strong> 启用动态响应模板功能，支持变量替换和逻辑处理</li>
-          <li><strong>CORS 支持:</strong> 为跨域请求提供支持</li>
-          <li><strong>异步响应:</strong> 启用异步响应处理，提高并发性能</li>
-          <li><strong>代理设置:</strong> 配置代理相关的超时和头信息</li>
-        </ul>
-
-        <Title level={4} style={{ marginTop: 24 }}>性能优化建议</Title>
-        <ul>
-          <li>如果不需要请求历史记录，可以禁用请求日志以提高性能</li>
-          <li>合理设置最大请求日志条数，避免内存占用过多</li>
-          <li>根据实际需求调整异步响应线程数</li>
-          <li>在生产环境中可以禁用横幅信息</li>
-        </ul>
+        <Title level={5}>读取接口</Title>
+        <Paragraph type="secondary" style={{ marginBottom: 4 }}>
+          WireMock 3.x 规范没有设置读取接口；4.x 提供 <Text code>GET /__admin/settings</Text> 并返回
+          <Tag>{'{ settings: {...} }'}</Tag> 信封。本页会自动探测并按需解包，探测失败时进入只写模式。
+        </Paragraph>
       </div>
-    </Card>
-  );
-};
+
+      <Divider style={{ margin: '8px 0' }} />
+
+      <div>
+        <Title level={5}>字段对照</Title>
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          固定延时的单位是毫秒；<Text code>delayDistribution</Text> 是对象，
+          均匀分布用 lower/upper，对数正态分布必须用 median/sigma。
+        </Paragraph>
+      </div>
+    </Space>
+  </Card>
+);
 
 export default SettingsInstructions;

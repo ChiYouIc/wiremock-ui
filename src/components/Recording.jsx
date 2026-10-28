@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Typography, Form, notification, Row, Col } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { recordingApi } from '../services/wiremockApi';
+import { recordingsApi } from '../services/wiremockApi';
+import { showApiError } from '../services/wiremockErrors';
 import RecordingStatusCard from './Recording/RecordingStatusCard';
 import StartRecordingCard from './Recording/StartRecordingCard';
 import SnapshotRecordingCard from './Recording/SnapshotRecordingCard';
@@ -9,19 +10,49 @@ import RecordingInstructions from './Recording/RecordingInstructions';
 
 const { Title, Text } = Typography;
 
+const parseCaptureHeaders = (text) => {
+  const names = String(text || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (names.length === 0) return undefined;
+  return names.reduce((acc, name) => ({ ...acc, [name]: {} }), {});
+};
+
+const splitTransformers = (text) =>
+  String(text || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+// filters 是 request-pattern：method 必须匹配 ^[A-Z]+$
+const buildFilters = (values, withIds) => {
+  const filters = {};
+  if (values.urlPathPattern) filters.urlPathPattern = values.urlPathPattern;
+  if (values.method && /^[A-Z]+$/.test(values.method.trim())) {
+    filters.method = values.method.trim();
+  }
+  if (withIds) {
+    const ids = String(values.ids || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (ids.length > 0) filters.ids = ids;
+  }
+  return Object.keys(filters).length > 0 ? filters : undefined;
+};
+
 const Recording = () => {
-  const [recordingStatus, setRecordingStatus] = useState(null);
+  const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
 
-  // 获取录制状态
   const fetchRecordingStatus = async () => {
     try {
-      const response = await recordingApi.getStatus();
-      setRecordingStatus(response.data);
-    } catch (error) {
-      // 如果获取状态失败，可能是因为没有正在录制
-      setRecordingStatus({ status: 'Stopped' });
+      const response = await recordingsApi.status();
+      setStatus(response.data?.status || 'NeverStarted');
+    } catch {
+      setStatus(null);
     }
   };
 
@@ -29,91 +60,93 @@ const Recording = () => {
     fetchRecordingStatus();
   }, []);
 
-  // 开始录制
   const handleStartRecording = async (values) => {
     setLoading(true);
     try {
       const config = {
-        targetBaseUrl: values.targetUrl,
-        filters: {
-          urlPattern: values.urlPattern || '.*',
-          method: values.method || 'ANY',
-        },
-        captureHeaders: values.captureHeaders !== false,
-        requestBodyPattern: values.requestBodyPattern,
+        targetBaseUrl: values.targetBaseUrl,
         persist: values.persist !== false,
         repeatsAsScenarios: values.repeatsAsScenarios === true,
-        transformers: values.transformers ? values.transformers.split(',').map(t => t.trim()) : [],
       };
 
-      await recordingApi.start(config);
+      const filters = buildFilters(values, false);
+      if (filters) config.filters = filters;
+
+      const captureHeaders = parseCaptureHeaders(values.captureHeaders);
+      if (captureHeaders) config.captureHeaders = captureHeaders;
+
+      if (values.requestBodyPatternMatcher) {
+        config.requestBodyPattern = {
+          matcher: values.requestBodyPatternMatcher,
+          ignoreArrayOrder: true,
+          ignoreExtraElements: true,
+        };
+      }
+
+      const transformers = splitTransformers(values.transformers);
+      if (transformers.length > 0) config.transformers = transformers;
+
+      await recordingsApi.start(config);
       notification.success({
         message: '录制已开始',
-        description: '正在录制 API 请求和响应',
+        description: '正在按 targetBaseUrl 代理并录制请求',
       });
       fetchRecordingStatus();
     } catch (error) {
-      notification.error({
-        message: '开始录制失败',
-        description: error.message,
-      });
+      showApiError(error, '开始录制失败');
     } finally {
       setLoading(false);
     }
   };
 
-  // 停止录制
   const handleStopRecording = async () => {
     setLoading(true);
     try {
-      await recordingApi.stop();
+      const response = await recordingsApi.stop();
+      const count = Array.isArray(response.data?.mappings) ? response.data.mappings.length : 0;
       notification.success({
         message: '录制已停止',
-        description: '录制的映射已保存',
+        description: `共生成 ${count} 个映射`,
       });
       fetchRecordingStatus();
     } catch (error) {
-      notification.error({
-        message: '停止录制失败',
-        description: error.message,
-      });
+      showApiError(error, '停止录制失败');
     } finally {
       setLoading(false);
     }
   };
 
-  // 快照录制
   const handleSnapshot = async (values) => {
     setLoading(true);
     try {
       const config = {
-        targetBaseUrl: values.snapshotUrl,
-        filters: {
-          urlPattern: values.snapshotUrlPattern || '.*',
-        },
-        captureHeaders: values.snapshotCaptureHeaders !== false,
-        persist: values.snapshotPersist !== false,
+        persist: values.persist !== false,
+        repeatsAsScenarios: values.repeatsAsScenarios === true,
       };
 
-      await recordingApi.snapshot(config);
+      const filters = buildFilters(values, true);
+      if (filters) config.filters = filters;
+
+      const captureHeaders = parseCaptureHeaders(values.captureHeaders);
+      if (captureHeaders) config.captureHeaders = captureHeaders;
+
+      const response = await recordingsApi.snapshot(config);
+      const count = Array.isArray(response.data?.mappings) ? response.data.mappings.length : 0;
       notification.success({
         message: '快照录制完成',
-        description: '已生成当前状态的映射快照',
+        description: `共生成 ${count} 个映射`,
       });
     } catch (error) {
-      notification.error({
-        message: '快照录制失败',
-        description: error.message,
-      });
+      showApiError(error, '快照录制失败');
     } finally {
       setLoading(false);
     }
   };
 
-  const isRecording = recordingStatus?.status === 'Recording';
+  const isRecording = status === 'Recording';
 
   return (
-    <div className="fade-in">
+    <div className="fade-in page-stack">
       <div className="page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
@@ -122,17 +155,14 @@ const Recording = () => {
             </Title>
             <Text type="secondary">录制真实 API 响应并生成 stub 映射</Text>
           </div>
-          <Button 
-            icon={<ReloadOutlined />} 
-            onClick={fetchRecordingStatus}
-          >
+          <Button icon={<ReloadOutlined />} onClick={fetchRecordingStatus}>
             刷新状态
           </Button>
         </div>
       </div>
 
       <RecordingStatusCard
-        recordingStatus={recordingStatus}
+        status={status}
         isRecording={isRecording}
         onStopRecording={handleStopRecording}
         loading={loading}
@@ -149,10 +179,7 @@ const Recording = () => {
         </Col>
 
         <Col xs={24} lg={12}>
-          <SnapshotRecordingCard
-            onSnapshot={handleSnapshot}
-            loading={loading}
-          />
+          <SnapshotRecordingCard onSnapshot={handleSnapshot} loading={loading} />
         </Col>
       </Row>
 

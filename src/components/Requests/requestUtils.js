@@ -1,71 +1,79 @@
 import React from 'react';
 import dayjs from 'dayjs';
 
-// 格式化时间
 export const formatTime = (timestamp, dateString) => {
-  if (timestamp) {
-    return dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss.SSS');
-  }
-  if (dateString) {
-    return dayjs(dateString).format('YYYY-MM-DD HH:mm:ss.SSS');
-  }
+  if (timestamp) return dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss.SSS');
+  if (dateString) return dayjs(dateString).format('YYYY-MM-DD HH:mm:ss.SSS');
   return '-';
 };
 
-// 格式化JSON
-export const formatJson = (obj) => {
-  if (!obj) return '';
-  if (typeof obj === 'string') {
+export const formatJson = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') {
     try {
-      return JSON.stringify(JSON.parse(obj), null, 2);
+      return JSON.stringify(JSON.parse(value), null, 2);
     } catch {
-      return obj;
+      return value;
     }
   }
-  return JSON.stringify(obj, null, 2);
+  return JSON.stringify(value, null, 2);
 };
 
-// 解析查询参数
+// 日志条目的时间：优先 request.loggedDate
+export const getLoggedDate = (record) =>
+  record?.request?.loggedDate ?? record?.loggedDate ?? record?.request?.loggedDateString;
+
+// 匹配状态：优先 wasMatched；否则看 stubMapping，注意未命中时 WireMock 会返回
+// 一个 response.fromConfiguredStub=false 的占位映射（method=ANY），不能算作命中
+export const isMatched = (record) => {
+  if (typeof record?.wasMatched === 'boolean') return record.wasMatched;
+  const stub = record?.stubMapping;
+  if (!stub) return false;
+  if (stub.response?.fromConfiguredStub === false) return false;
+  return Boolean(stub.id);
+};
+
+export const getResponseStatus = (record) =>
+  record?.response?.status ?? record?.responseDefinition?.status ?? null;
+
 export const parseQueryParams = (queryParams) => {
   if (!queryParams) return [];
   return Object.entries(queryParams).map(([key, value]) => ({
     key,
     name: key,
-    value: Array.isArray(value.values) ? value.values.join(', ') : value.values || value
+    value: Array.isArray(value?.values) ? value.values.join(', ') : value?.values ?? value,
   }));
 };
 
-// 解析请求头
 export const parseHeaders = (headers) => {
   if (!headers) return [];
   return Object.entries(headers).map(([key, value]) => ({
     key,
     name: key,
-    value: Array.isArray(value) ? value.join(', ') : value
+    value: Array.isArray(value) ? value.join(', ') : String(value ?? ''),
   }));
 };
 
-// 获取匹配的Stub信息
-export const getMatchedStubInfo = (request) => {
-  if (!request.stubMapping) return null;
+export const getMatchedStubInfo = (record) => {
+  if (!record?.stubMapping) return null;
   return {
-    id: request.stubMapping.id,
-    name: request.stubMapping.name,
-    priority: request.stubMapping.priority,
-    scenario: request.stubMapping.scenarioName,
-    description: request.stubMapping.metadata?.wmui?.description
+    id: record.stubMapping.id,
+    name: record.stubMapping.name,
+    priority: record.stubMapping.priority,
+    scenario: record.stubMapping.scenarioName,
+    description: record.stubMapping.metadata?.wmui?.description,
+    request: record.stubMapping.request,
   };
 };
 
-// 获取Webhook事件
-export const getWebhookEvents = (request) => {
-  if (!request.subEvents) return [];
-  return request.subEvents.filter(event => 
-    event.type === 'WEBHOOK_REQUEST' || event.type === 'WEBHOOK_RESPONSE'
+// subEvents 不是规范字段，仅在自定义扩展提供时展示
+export const getWebhookEvents = (record) => {
+  if (!Array.isArray(record?.subEvents)) return [];
+  return record.subEvents.filter(
+    (event) => event.type === 'WEBHOOK_REQUEST' || event.type === 'WEBHOOK_RESPONSE'
   );
 };
 
-// 获取状态颜色
 export const getStatusColor = (status) => {
   if (!status) return 'orange';
   if (status >= 200 && status < 300) return 'green';
@@ -73,27 +81,32 @@ export const getStatusColor = (status) => {
   return 'orange';
 };
 
-// 表格列配置
 export const getTableColumns = () => [
   { title: '头部名称', dataIndex: 'name', key: 'name', width: '30%' },
-  { 
-    title: '头部值', 
-    dataIndex: 'value', 
-    key: 'value', 
-    render: (text) => React.createElement('span', {
-      style: { fontFamily: 'monospace', fontSize: '12px' }
-    }, text)
-  }
+  {
+    title: '头部值',
+    dataIndex: 'value',
+    key: 'value',
+    render: (text) =>
+      React.createElement(
+        'span',
+        { style: { fontFamily: 'monospace', fontSize: '12px' } },
+        text
+      ),
+  },
 ];
 
 export const getParamTableColumns = () => [
   { title: '参数名', dataIndex: 'name', key: 'name', width: '30%' },
-  { 
-    title: '参数值', 
-    dataIndex: 'value', 
-    key: 'value', 
-    render: (text) => React.createElement('span', {
-      style: { fontFamily: 'monospace', fontSize: '12px' }
-    }, text)
-  }
+  {
+    title: '参数值',
+    dataIndex: 'value',
+    key: 'value',
+    render: (text) =>
+      React.createElement(
+        'span',
+        { style: { fontFamily: 'monospace', fontSize: '12px' } },
+        text
+      ),
+  },
 ];

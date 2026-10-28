@@ -6,7 +6,7 @@ const { Paragraph } = Typography;
 
 const SnapshotRecordingCard = ({ onSnapshot, loading }) => {
   return (
-    <Card 
+    <Card
       title={
         <Space>
           <CameraOutlined />
@@ -15,46 +15,44 @@ const SnapshotRecordingCard = ({ onSnapshot, loading }) => {
       }
       className="content-card"
     >
-      <Paragraph>
-        快照录制可以立即捕获指定 API 的当前状态，生成对应的 stub 映射。
+      <Paragraph type="secondary">
+        快照不会访问目标服务，而是把「请求日志」里已记录的请求/响应转换成映射。
+        因此这里只需要指定日志过滤条件。
       </Paragraph>
 
-      <Form
-        layout="vertical"
-        onFinish={onSnapshot}
-      >
-        <Form.Item
-          label="目标 URL"
-          name="snapshotUrl"
-          rules={[{ required: true, message: '请输入目标 URL' }]}
-        >
-          <Input placeholder="https://api.example.com" />
+      <Form layout="vertical" onFinish={onSnapshot}>
+        <Form.Item label="URL 路径正则过滤" name="urlPathPattern" extra="对应 filters.urlPathPattern">
+          <Input placeholder="/api/.*" />
         </Form.Item>
 
         <Form.Item
-          label="URL 模式"
-          name="snapshotUrlPattern"
+          label="只处理指定请求 ID"
+          name="ids"
+          extra="逗号分隔；对应 filters.ids，留空表示全部"
         >
-          <Input placeholder=".*" />
+          <Input placeholder="3a9a787c-cc22-46c8-bcc9-debba2a60399" />
+        </Form.Item>
+
+        <Form.Item
+          label="捕获的请求头"
+          name="captureHeaders"
+          extra="逗号分隔；对应 captureHeaders 对象"
+        >
+          <Input placeholder="Accept, Content-Type" />
         </Form.Item>
 
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item
-              label="捕获请求头"
-              name="snapshotCaptureHeaders"
-              valuePropName="checked"
-              initialValue={true}
-            >
+            <Form.Item label="持久化映射" name="persist" valuePropName="checked" initialValue={true}>
               <Switch />
             </Form.Item>
           </Col>
           <Col span={12}>
             <Form.Item
-              label="持久化映射"
-              name="snapshotPersist"
+              label="重复请求转场景"
+              name="repeatsAsScenarios"
               valuePropName="checked"
-              initialValue={true}
+              initialValue={false}
             >
               <Switch />
             </Form.Item>
@@ -62,13 +60,7 @@ const SnapshotRecordingCard = ({ onSnapshot, loading }) => {
         </Row>
 
         <Form.Item>
-          <Button 
-            type="primary" 
-            htmlType="submit" 
-            icon={<CameraOutlined />}
-            loading={loading}
-            block
-          >
+          <Button type="primary" htmlType="submit" icon={<CameraOutlined />} loading={loading} block>
             创建快照
           </Button>
         </Form.Item>

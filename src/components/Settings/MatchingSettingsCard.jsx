@@ -1,38 +1,34 @@
 import React from 'react';
-import { Card, Form, Switch, InputNumber } from 'antd';
+import { Card, Form, Switch } from 'antd';
 
 const MatchingSettingsCard = () => {
   return (
-    <Card title="匹配设置" className="content-card">
+    <Card title="CORS 与代理行为" className="content-card">
       <Form.Item
-        label="启用存根 CORS"
-        name="stubCorsEnabled"
+        label="启用浏览器代理"
+        name="enableBrowserProxying"
         valuePropName="checked"
-        extra="为存根响应启用 CORS 支持"
+        extra="对应 GlobalSettings.enableBrowserProxying"
       >
         <Switch />
       </Form.Item>
 
       <Form.Item
-        label="异步响应启用"
-        name="asynchronousResponseEnabled"
+        label="为存根响应启用 CORS"
+        name="enableStubCors"
         valuePropName="checked"
-        extra="启用异步响应处理"
+        extra="对应 GlobalSettings.enableStubCors"
       >
         <Switch />
       </Form.Item>
 
       <Form.Item
-        label="异步响应线程数"
-        name="asynchronousResponseThreads"
-        extra="处理异步响应的线程池大小"
+        label="保留 Host 头"
+        name="preserveHostHeader"
+        valuePropName="checked"
+        extra="对应 GlobalSettings.preserveHostHeader"
       >
-        <InputNumber 
-          min={1} 
-          max={100} 
-          placeholder="10" 
-          style={{ width: '100%' }}
-        />
+        <Switch />
       </Form.Item>
     </Card>
   );

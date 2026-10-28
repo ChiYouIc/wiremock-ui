@@ -1,0 +1,45 @@
+{
+  "mappings": [
+    {
+      "id": "50d03365-e433-4335-a0b2-139cb71f421f",
+      "name": "货架服务mock支付回调",
+      "request": {
+        "urlPattern": "/pay/success.*",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "statusMessage": "",
+        "body": "{\n    \"finishedTime\": 1734930455000,\n    \"hold\": 0,\n    \"newSysFlag\": true,\n    \"nonceStr\": \"a633c41646614de093c42f3eafd4d7f5\",\n    \"orderId\": \"{{request.query.order_id}}\",\n    \"projectCode\": \"CXhopegoo1301XGYL\",\n    \"projectSerialId\": \"{{request.query.pay_trade_no}}\",\n    \"regulatorFlag\": 0,\n    \"sign\": \"B756D0CE9C9F118DDDC472F6873A33C2\",\n    \"totalAmt\": {{request.query.pay_amount}},\n    \"totalCallback\": true,\n    \"tradeStatus\": \"SUCCESS\",\n    \"transDetails\": [\n        {\n            \"amt\": {{request.query.pay_amount}},\n            \"channelCode\": \"JinFu\",\n            \"channelId\": \"2100\",\n            \"channelName\": \"同程金服\",\n            \"clientSource\": \"I18NH5V2\",\n            \"companyCode\": \"1301\",\n            \"couponInfoList\": [],\n            \"currency\": \"USD\",\n            \"errorCode\": \"\",\n            \"errorInfo\": \"0000|处理成功\",\n            \"exchangeRate\": 1.00000000,\n            \"finishedTime\": 1734930455000,\n            \"friendPay\": 0,\n            \"memberId\": \"8888888800000277318\",\n            \"operationType\": \"pay\",\n            \"orderType\": \"regular\",\n            \"otherTradeNo\": \"\",\n            \"payMode\": \"regular\",\n            \"productCode\": \"JinFu-PayPal\",\n            \"productName\": \"Mock虚拟支付无资金流\",\n            \"projectType\": 0,\n            \"serviceAmt\": 0.00,\n            \"serviceCurrency\": \"\",\n            \"settleCurrency\": \"{{request.query.pay_currency}}\",\n            \"settlementAmt\": {{request.query.pay_amount}},\n            \"supplierTradeNo\": \"GP0404806767\",\n            \"tradeNo\": \"EvieTest-DHG6768UFU9ERG67UST8B\",\n            \"tradeStatus\": \"SUCCESS\"\n        }\n    ],\n    \"transferFlag\": true\n}",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "transformers": [
+          "response-template"
+        ]
+      },
+      "uuid": "50d03365-e433-4335-a0b2-139cb71f421f",
+      "persistent": true,
+      "priority": 5,
+      "scenarioName": "支付",
+      "metadata": {
+        "wmui": {
+          "description": "mock支付\nhttp://localhost:8080\n?order_id=HG676A27U83000417B40&pay_trade_no=DHG6768UFU9ERG67UST8B&pay_amount=2.00&pay_currency=USD",
+          "createTime": "2024-12-23 14:58:38",
+          "updateTime": "2025-05-20 16:21:58",
+          "responseBodyType": "text"
+        }
+      },
+      "postServeActions": {
+        "webhook": {
+          "method": "POST",
+          "url": "http://sea.t.hopegoo.com/sea_order_center/shelvesPay/callback",
+          "headers": {
+            "Content-Type": "text/plain"
+          },
+          "body": "{\n    \"finishedTime\": 1734930455000,\n    \"hold\": 0,\n    \"newSysFlag\": true,\n    \"nonceStr\": \"a633c41646614de093c42f3eafd4d7f5\",\n    \"orderId\": \"{{originalRequest.query.order_id}}\",\n    \"projectCode\": \"CXhopegoo1301XGYL\",\n    \"projectSerialId\": \"{{originalRequest.query.pay_trade_no}}\",\n    \"regulatorFlag\": 0,\n    \"sign\": \"B756D0CE9C9F118DDDC472F6873A33C2\",\n    \"totalAmt\": {{originalRequest.query.pay_amount}},\n    \"totalCallback\": true,\n    \"tradeStatus\": \"SUCCESS\",\n    \"transDetails\": [\n        {\n            \"amt\": {{originalRequest.query.pay_amount}},\n            \"channelCode\": \"JinFu\",\n            \"channelId\": \"2100\",\n            \"channelName\": \"同程金服\",\n            \"clientSource\": \"I18NH5V2\",\n            \"companyCode\": \"1301\",\n            \"couponInfoList\": [],\n            \"currency\": \"USD\",\n            \"errorCode\": \"\",\n            \"errorInfo\": \"0000|处理成功\",\n            \"exchangeRate\": 1.00000000,\n            \"finishedTime\": 1734930455000,\n            \"friendPay\": 0,\n            \"memberId\": \"8888888800000277318\",\n            \"operationType\": \"pay\",\n            \"orderType\": \"regular\",\n            \"otherTradeNo\": \"\",\n            \"payMode\": \"regular\",\n            \"productCode\": \"JinFu-PayPal\",\n            \"productName\": \"Mock虚拟支付无资金流\",\n            \"projectType\": 0,\n            \"serviceAmt\": 0.00,\n            \"serviceCurrency\": \"\",\n            \"settleCurrency\": \"{{originalRequest.query.pay_currency}}\",\n            \"settlementAmt\": {{originalRequest.query.pay_amount}},\n            \"supplierTradeNo\": \"GP0404806767\",\n            \"tradeNo\": \"{{originalRequest.query.pay_trade_no}}\",\n            \"tradeStatus\": \"SUCCESS\"\n        }\n    ],\n    \"transferFlag\": true\n}"
+        }
+      }
+    }
+  ]
+}
