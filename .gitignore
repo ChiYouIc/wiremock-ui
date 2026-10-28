@@ -91,3 +91,7 @@ coverage/
 
 # DynamoDB Local files
 .dynamodb/
+
+# 本地样例数据（含内网域名/订单号，不入库）
+requests.json
+example_api.json
