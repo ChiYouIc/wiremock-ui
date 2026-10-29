@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Space, Typography, Card, Form, Modal, Upload, Empty, message } from 'antd';
+import { Button, Space, Typography, Card, Form, Modal, Upload, Empty, message, notification, Alert } from 'antd';
 import {
   ReloadOutlined,
   DownloadOutlined,
@@ -29,6 +29,7 @@ const StubMappings = () => {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [liveValues, setLiveValues] = useState(null);
+  const [revealSignal, setRevealSignal] = useState(0);
   const [form] = Form.useForm();
 
   const fetchMappings = useCallback(async () => {
@@ -74,6 +75,10 @@ const StubMappings = () => {
 
   const isNew = selectedKey === NEW_KEY;
 
+  const selectedHidden = Boolean(
+    selectedKey && !isNew && !filteredRecords.some((record) => record.id === selectedKey)
+  );
+
   const applyRecord = useCallback(
     (record) => {
       const values = mapRecordToFormData(record);
@@ -118,12 +123,58 @@ const StubMappings = () => {
     applyRecord(record);
   };
 
+  // 刷新：先保护未保存修改，再回填服务端最新值（否则表单会停留在旧数据上）
+  const handleRefresh = async () => {
+    if (!(await askDiscard())) return;
+    const list = await fetchMappings();
+
+    if (isNew) {
+      // 放弃的是草稿，重置回默认值
+      const values = getDefaultFormValues();
+      form.resetFields();
+      form.setFieldsValue(values);
+      setLiveValues(values);
+      setDirty(false);
+      return;
+    }
+    if (!selectedKey) return;
+
+    const latest = list.find((item) => item.id === selectedKey);
+    if (latest) {
+      applyRecord(latest);
+      notification.info({
+        message: '已同步服务端配置',
+        description: '右侧表单已回填最新值',
+        duration: 3,
+      });
+      return;
+    }
+    setSelectedKey(null);
+    setEditorRecord(null);
+    setDirty(false);
+    setLiveValues(null);
+    form.resetFields();
+    notification.warning({
+      message: '该映射已不存在',
+      description: '服务端已找不到当前编辑的映射，可能是被其他客户端删除。',
+      duration: 6,
+    });
+  };
+
   const handleDuplicate = async (record) => {
     if (!record) return;
     if (!(await askDiscard())) return;
     const values = mapRecordToFormData(record);
     const originalName =
-      record.name || `${record.request?.method || 'GET'} ${record.request?.urlPath || '/'}`;
+      record.name ||
+      `${record.request?.method || 'GET'} ${
+        record.request?.urlPathTemplate ||
+        record.request?.urlPath ||
+        record.request?.url ||
+        record.request?.urlPattern ||
+        record.request?.urlPathPattern ||
+        '/'
+      }`;
     const timestamp = new Date().toLocaleString('zh-CN', {
       month: '2-digit',
       day: '2-digit',
@@ -144,7 +195,11 @@ const StubMappings = () => {
     const confirmed = await new Promise((resolve) => {
       Modal.confirm({
         title: '确定删除这个映射？',
-        content: record.name || record.request?.urlPath || record.id,
+        content:
+          record.name ||
+          record.request?.urlPathTemplate ||
+          record.request?.urlPath ||
+          record.id,
         okText: '删除',
         okButtonProps: { danger: true },
         cancelText: '取消',
@@ -166,15 +221,33 @@ const StubMappings = () => {
 
   const handleSubmit = async (values) => {
     setSaving(true);
-    const saved = await handleSave(values, isNew ? null : editorRecord);
+    const result = await handleSave(values, isNew ? null : editorRecord);
     setSaving(false);
 
-    if (!saved) return;
+    if (!result.ok) {
+      if (result.errors?.length) {
+        form.setFields(
+          result.errors.map((item) => ({ name: item.path, errors: [item.message] }))
+        );
+        setRevealSignal((value) => value + 1);
+        notification.error({
+          message: '配置校验未通过',
+          description: result.errors.map((item) => item.message).join('\n'),
+          style: { whiteSpace: 'pre-line' },
+        });
+        const [first] = result.errors;
+        if (first?.path) {
+          // 等折叠面板展开、错误渲染完成后再滚动
+          setTimeout(() => form.scrollToField(first.path, { behavior: 'smooth', block: 'center' }), 150);
+        }
+      }
+      return;
+    }
 
     if (isNew) {
-      applyRecord(saved);
+      applyRecord(result.mapping);
     } else {
-      setEditorRecord({ ...editorRecord, ...saved });
+      setEditorRecord({ ...editorRecord, ...result.mapping });
       setDirty(false);
     }
   };
@@ -188,11 +261,29 @@ const StubMappings = () => {
   };
 
   const handleClearUnmatched = async () => {
+    if (!(await askDiscard())) return;
+    const confirmed = await new Promise((resolve) => {
+      Modal.confirm({
+        title: '清理所有未匹配的映射？',
+        content: '只删除从未命中过请求的映射，操作不可撤销，建议先「导出全部」备份。',
+        okText: '清理',
+        okButtonProps: { danger: true },
+        cancelText: '取消',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+
     try {
       await stubMappingsApi.removeUnmatched();
       await fetchMappings();
       setSelectedKey(null);
+      setEditorRecord(null);
+      setDirty(false);
+      setLiveValues(null);
       form.resetFields();
+      message.success('已清理未匹配的映射');
     } catch (error) {
       showApiError(error, '清理失败');
     }
@@ -203,7 +294,14 @@ const StubMappings = () => {
     handleExport(list, []);
   };
 
-  const handleDeleteGroup = (group) => {
+  // 导入前先保护未保存的修改
+  const handleImportFile = async (file) => {
+    if (!(await askDiscard())) return false;
+    return handleImport(file, fetchMappings);
+  };
+
+  const handleDeleteGroup = async (group) => {
+    if (!(await askDiscard())) return;
     Modal.confirm({
       title: `删除分组「${group}」下的所有映射？`,
       content: '会调用 POST /__admin/mappings/remove-by-metadata，操作不可撤销。',
@@ -250,7 +348,7 @@ const StubMappings = () => {
           <Text type="secondary">左侧选择、右侧编辑，保存后立即生效</Text>
         </div>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} onClick={fetchMappings} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading}>
             刷新
           </Button>
           <Button icon={<ClearOutlined />} onClick={handleClearUnmatched}>
@@ -262,7 +360,7 @@ const StubMappings = () => {
           <Upload
             accept=".json"
             showUploadList={false}
-            beforeUpload={(file) => handleImport(file, fetchMappings)}
+            beforeUpload={(file) => handleImportFile(file)}
           >
             <Button icon={<UploadOutlined />}>导入</Button>
           </Upload>
@@ -283,6 +381,7 @@ const StubMappings = () => {
           onDelete={handleRemove}
           groups={groups}
           groupFilter={groupFilter}
+          ungroupedTotal={records.filter((record) => !record.metadata?.wmui?.group).length}
           onGroupFilterChange={setGroupFilter}
           onExportGroup={handleExportGroup}
           onDeleteGroup={handleDeleteGroup}
@@ -297,6 +396,29 @@ const StubMappings = () => {
             saving={saving}
             liveValues={liveValues}
             groupOptions={groups}
+            revealSignal={revealSignal}
+            notice={
+              selectedHidden ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="当前编辑的映射不在左侧筛选结果里"
+                  description="它仍处于编辑状态，只是被搜索关键词或分组条件隐藏了。"
+                  action={
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setSearchText('');
+                        setGroupFilter(ALL_GROUPS);
+                      }}
+                    >
+                      清除筛选
+                    </Button>
+                  }
+                />
+              ) : null
+            }
             onDirty={(allValues) => {
               setDirty(true);
               setLiveValues(allValues);

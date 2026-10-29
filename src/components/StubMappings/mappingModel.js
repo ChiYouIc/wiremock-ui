@@ -2,10 +2,58 @@
 
 export const URL_MATCH_TYPES = [
   { value: 'urlPath', label: '路径精确（urlPath）', placeholder: '/api/users' },
+  {
+    value: 'urlPathTemplate',
+    label: '路径模板（urlPathTemplate，支持 {变量}）',
+    placeholder: '/openapi/param2/{version}/{namespace}/{apiName}/{appKey}',
+  },
   { value: 'urlPathPattern', label: '路径正则（urlPathPattern）', placeholder: '/api/users/[0-9]+' },
   { value: 'url', label: 'URL 精确（url，含查询串）', placeholder: '/api/users?page=1' },
   { value: 'urlPattern', label: 'URL 正则（urlPattern，含查询串）', placeholder: '/api/users\\?page=[0-9]+' },
 ];
+
+// urlPathPattern / urlPattern 交给 Java 正则引擎编译，{变量} 会被当成量词；
+// 带占位符的路径必须用 urlPathTemplate。
+export const REGEX_MATCH_TYPES = new Set(['urlPathPattern', 'urlPattern']);
+export const EXACT_MATCH_TYPES = new Set(['urlPath', 'url']);
+export const PATH_PARAMETER_MATCH_TYPES = new Set(['urlPathPattern', 'urlPathTemplate']);
+
+const PATH_VARIABLE = /\{[A-Za-z_][\w-]*\}/;
+
+/** 判断值里是否含有 {name} 形式的路径变量 */
+export const looksLikePathTemplate = (value) =>
+  typeof value === 'string' && PATH_VARIABLE.test(value);
+
+/** 取出路径模板里的全部变量名（不含大括号） */
+export const extractPathVariables = (value) => {
+  if (typeof value !== 'string') return [];
+  return Array.from(value.matchAll(/\{([A-Za-z_][\w-]*)\}/g), (match) => match[1]);
+};
+
+const REGEX_META = /[.^$*+?()[\]{}|\\]/;
+
+// 路径模板里除了 {变量} 之外不允许出现的正则元字符（不含 . 和 +，它们在 URL 里很常见）
+const TEMPLATE_ILLEGAL_META = /[[\](){}*?^$|\\]/;
+
+/**
+ * 判断一个「写法像路径模板」的 URL 是否只由字面量片段和 {变量} 组成。
+ * 只有这种值才能无损地从 urlPattern / urlPathPattern 改写成 urlPathTemplate；
+ * 含其他正则元字符（.*、\d 等）时返回 null，交由调用方提示用户手改。
+ */
+export const toPathTemplate = (value) => {
+  if (typeof value !== 'string' || !value.startsWith('/')) return null;
+  const segments = value.split('/').slice(1);
+  const variables = [];
+  for (const segment of segments) {
+    const variable = /^\{([A-Za-z_][\w-]*)\}$/.exec(segment);
+    if (variable) {
+      variables.push(variable[1]);
+      continue;
+    }
+    if (REGEX_META.test(segment)) return null;
+  }
+  return variables.length > 0 ? { urlPathTemplate: value, variables } : null;
+};
 
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'TRACE', 'ANY'];
 
@@ -53,7 +101,7 @@ export const getDefaultFormValues = () => ({
   request: {
     method: 'GET',
     urlMatchType: 'urlPath',
-    urlValue: '/',
+    urlValue: '',
     scheme: undefined,
     host: undefined,
     port: undefined,
@@ -90,6 +138,63 @@ export const getDefaultFormValues = () => ({
 });
 
 const toPairObject = (obj) => (isPlainObject(obj) ? obj : {});
+
+export const MATCHER_MAP_FIELDS = [
+  'queryParameters',
+  'headers',
+  'cookies',
+  'formParameters',
+  'pathParameters',
+];
+
+/**
+ * 把 { key: "值" } 这种简写补成 WireMock 要求的断言对象 { key: { equalTo: "值" } }。
+ * 服务端对裸字符串会返回 `"1" is not a valid match operation`。
+ */
+export const coerceMatcherMap = (map) => {
+  if (!isPlainObject(map)) return undefined;
+  const result = {};
+  Object.entries(map).forEach(([key, value]) => {
+    if (!key) return;
+    if (isPlainObject(value) || Array.isArray(value)) {
+      result[key] = value;
+      return;
+    }
+    result[key] = { equalTo: value === undefined || value === null ? '' : String(value) };
+  });
+  return Object.keys(result).length > 0 ? result : undefined;
+};
+
+const isShorthandMatcher = (value) => !isPlainObject(value) && !Array.isArray(value);
+
+/**
+ * 键值行模型 → 提交对象。
+ * pattern 模式（query/header/cookie/form/path 参数）把裸值包成 {"equalTo": "x"}，
+ * plain 模式（响应头 / webhook 请求头）保持纯字符串，服务端这两处只接受字符串。
+ */
+export const rowsToObject = (rows, valueMode = 'plain') => {
+  const result = {};
+  (rows || []).forEach((row) => {
+    const key = row?.key?.trim();
+    if (!key) return;
+    if (row.mode === 'predicate') {
+      result[key] = row.predicate === 'absent' ? { absent: true } : { [row.predicate]: row.value ?? '' };
+      return;
+    }
+    // text 模式是简写：键填了但值留空的行走「未填写」，不能变成 equalTo ""，
+    // 否则会要求请求里该参数/头等于空串，映射永远不命中。
+    if (isEmpty(row.value)) return;
+    result[key] = valueMode === 'pattern' ? { equalTo: row.value } : row.value;
+  });
+  return result;
+};
+
+const isEmptyPredicate = (matcher) => {
+  if (!isPlainObject(matcher)) return isEmpty(matcher);
+  const [predicate] = Object.keys(matcher);
+  if (predicate === 'absent') return false;
+  return isEmpty(matcher[predicate]);
+};
 
 const pickStr = (value) => (isEmpty(value) ? undefined : value);
 
@@ -225,15 +330,15 @@ export const buildMappingPayload = (values) => {
 
   const pairFields = ['queryParameters', 'headers', 'cookies', 'formParameters'];
   pairFields.forEach((field) => {
-    const value = request[field];
-    if (isPlainObject(value) && Object.keys(value).length > 0) {
+    const value = coerceMatcherMap(request[field]);
+    if (value) {
       requestPayload[field] = value;
     }
   });
 
-  if (urlMatchType === 'urlPathPattern') {
-    const pathParams = request.pathParameters;
-    if (isPlainObject(pathParams) && Object.keys(pathParams).length > 0) {
+  if (PATH_PARAMETER_MATCH_TYPES.has(urlMatchType)) {
+    const pathParams = coerceMatcherMap(request.pathParameters);
+    if (pathParams) {
       requestPayload.pathParameters = pathParams;
     }
   }
@@ -348,7 +453,7 @@ export const mapRecordToFormData = (record) => {
 
   let urlMatchType = 'urlPath';
   let urlValue = '/';
-  for (const type of ['url', 'urlPattern', 'urlPath', 'urlPathPattern']) {
+  for (const type of ['url', 'urlPattern', 'urlPathTemplate', 'urlPath', 'urlPathPattern']) {
     if (!isEmpty(request[type])) {
       urlMatchType = type;
       urlValue = request[type];
@@ -450,57 +555,158 @@ export const mapRecordToFormData = (record) => {
   };
 };
 
-/** 表单校验，返回错误消息数组（空数组表示通过） */
+/** 表单校验，返回 [{ path, message }]（空数组表示通过）；path 用于把错误落到具体字段 */
 export const validateMappingForm = (values) => {
   const errors = [];
+  const push = (path, message) => errors.push({ path, message });
   const request = values.request || {};
   const response = values.response || {};
+  const urlMatchType = request.urlMatchType || 'urlPath';
 
   if (isEmpty(request.urlValue)) {
-    errors.push('请填写 URL 匹配值');
+    push(['request', 'urlValue'], '请填写 URL 匹配值');
+  }
+  if (REGEX_MATCH_TYPES.has(urlMatchType) && looksLikePathTemplate(request.urlValue)) {
+    push(
+      ['request', 'urlValue'],
+      `${urlMatchType} 按 Java 正则解析，${request.urlValue} 里的 {变量} 会被当成非法量词（服务端报 Illegal repetition）。` +
+        '请改用「路径模板（urlPathTemplate）」，或把 {变量} 改写成 ([^/]+)'
+    );
+  }
+  if (EXACT_MATCH_TYPES.has(urlMatchType) && looksLikePathTemplate(request.urlValue)) {
+    push(
+      ['request', 'urlValue'],
+      `${urlMatchType} 是精确匹配，${request.urlValue} 里的 {变量} 会被当成普通字符，永远匹配不到真实请求。` +
+        '请改用「路径模板（urlPathTemplate）」，并在「路径参数」里校验各段取值'
+    );
+  }
+  if (urlMatchType === 'urlPathTemplate' && !isEmpty(request.urlValue)) {
+    const leftover = String(request.urlValue).replace(/\{[A-Za-z_][\w-]*\}/g, '');
+    if (TEMPLATE_ILLEGAL_META.test(leftover)) {
+      push(
+        ['request', 'urlValue'],
+        '路径模板里只能有字面量片段和 {变量}；[ ] ( ) * ? ^ $ | \\ 会被当成普通字符，请改写成 ([^/]+) 或改用正则匹配方式'
+      );
+    }
   }
   if (
-    request.urlMatchType === 'urlPathPattern' &&
+    PATH_PARAMETER_MATCH_TYPES.has(urlMatchType) &&
     isPlainObject(request.pathParameters) &&
-    Object.values(request.pathParameters).some((value) => isEmpty(value))
+    Object.values(request.pathParameters).some((value) => isEmptyPredicate(value))
   ) {
-    errors.push('路径参数的取值不能为空');
+    push(['request', 'pathParameters'], '路径参数的取值不能为空');
   }
+  if (urlMatchType === 'urlPathTemplate' && isPlainObject(request.pathParameters)) {
+    const variables = new Set(extractPathVariables(request.urlValue));
+    const unknown = Object.keys(request.pathParameters).filter((key) => !variables.has(key));
+    if (unknown.length > 0) {
+      push(['request', 'pathParameters'], `路径参数 ${unknown.join('、')} 在路径模板里不存在对应变量`);
+    }
+  }
+
+  MATCHER_MAP_FIELDS.forEach((field) => {
+    const map = request[field];
+    if (!isPlainObject(map)) return;
+    const arrays = Object.entries(map)
+      .filter(([, value]) => Array.isArray(value))
+      .map(([key]) => key);
+    if (arrays.length > 0) {
+      push(
+        ['request', field],
+        `${field} 里的 ${arrays.join('、')} 用了数组，WireMock 只接受断言对象（如 {"equalTo": "x"}）`
+      );
+    }
+  });
 
   (request.bodyMatchers || []).forEach((item, index) => {
     if (item?.matcher && TAKES_VALUE.has(item.matcher) && isEmpty(item.value)) {
-      errors.push(`请求体匹配 #${index + 1} 缺少匹配值`);
+      push(['request', 'bodyMatchers', index, 'value'], `请求体匹配 #${index + 1} 缺少匹配值`);
     }
     if (item?.matcher === 'equalToJson' && !isEmpty(item.value) && parseJsonText(item.value) === undefined) {
-      errors.push(`请求体匹配 #${index + 1} 不是合法 JSON`);
+      push(['request', 'bodyMatchers', index, 'value'], `请求体匹配 #${index + 1} 不是合法 JSON`);
     }
   });
 
   if (response.bodySource === 'jsonBody' && !isEmpty(response.bodyValue) && parseJsonText(response.bodyValue) === undefined) {
-    errors.push('响应体声明为 JSON，但内容不是合法 JSON');
+    push(['response', 'bodyValue'], '响应体声明为 JSON，但内容不是合法 JSON');
   }
   if (response.delayType === 'uniform' && Number(response.delayUpper) < Number(response.delayLower)) {
-    errors.push('延时的上限不能小于下限');
+    push(['response', 'delayUpper'], '随机延时的上限不能小于下限');
   }
   if (response.delayType === 'lognormal' && !(Number(response.delayMedian) > 0 && Number(response.delaySigma) > 0)) {
-    errors.push('对数正态延时需要 median 与 sigma 均大于 0（不支持 lower/upper）');
+    push(['response', 'delayMedian'], '对数正态延时需要 median 与 sigma 均大于 0（不支持 lower/upper）');
   }
   if (response.chunkedEnabled && !(Number(response.numberOfChunks) > 0)) {
-    errors.push('chunked 延时的分片数必须大于 0');
+    push(['response', 'numberOfChunks'], 'chunked 延时的分片数必须大于 0');
   }
   if (!isEmpty(response.transformerParameters)) {
     const parsed = parseJsonText(response.transformerParameters);
     if (!isPlainObject(parsed)) {
-      errors.push('转换器参数必须是 JSON 对象');
+      push(['response', 'transformerParameters'], '转换器参数必须是 JSON 对象');
     }
   }
 
   return errors;
 };
 
+/**
+ * 导入前归一化：
+ * 1. 把「正数字段 / 精确字段里写路径模板」的映射改写成 urlPathTemplate；
+ * 2. 把 { key: "值" } 的断言简写补成 { key: { equalTo: "值" } }。
+ * 返回 { mappings, converted, coerced, problems }；problems 非空时应阻止导入。
+ */
+export const normalizeImportedMappings = (mappings) => {
+  const converted = [];
+  const coerced = [];
+  const problems = [];
+  const result = (mappings || []).map((mapping) => {
+    const request = mapping?.request;
+    if (!isPlainObject(request)) return mapping;
+
+    let next = { ...request };
+    let touched = false;
+
+    for (const type of [...REGEX_MATCH_TYPES, ...EXACT_MATCH_TYPES]) {
+      if (!looksLikePathTemplate(next[type])) continue;
+      const template = toPathTemplate(next[type]);
+      if (!template) {
+        problems.push({
+          name: mapping.name || next[type],
+          reason: `${type} 里含有 {变量}，同时又混用了正则元字符，需要手工改成 urlPathTemplate`,
+        });
+        return mapping;
+      }
+      delete next[type];
+      next.urlPathTemplate = template.urlPathTemplate;
+      converted.push({ name: mapping.name || template.urlPathTemplate, from: type });
+      touched = true;
+      break;
+    }
+
+    MATCHER_MAP_FIELDS.forEach((field) => {
+      const value = next[field];
+      if (!isPlainObject(value)) return;
+      const shorthand = Object.keys(value).filter((key) => isShorthandMatcher(value[key]));
+      if (shorthand.length === 0) return;
+      next[field] = coerceMatcherMap(value);
+      coerced.push({ name: mapping.name || next.urlPathTemplate || '-', field, keys: shorthand });
+      touched = true;
+    });
+
+    return touched ? { ...mapping, request: next } : mapping;
+  });
+
+  return { mappings: result, converted, coerced, problems };
+};
+
 export const getRequestSummary = (record) => {
   const request = record?.request || {};
   const url =
-    request.url || request.urlPattern || request.urlPath || request.urlPathPattern || '-';
+    request.url ||
+    request.urlPattern ||
+    request.urlPath ||
+    request.urlPathTemplate ||
+    request.urlPathPattern ||
+    '-';
   return `${request.method || 'ANY'} ${url}`;
 };

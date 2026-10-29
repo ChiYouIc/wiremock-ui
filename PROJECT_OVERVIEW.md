@@ -145,16 +145,17 @@ WireMock Admin API (/__admin/*)
 
 表单模型集中在 `mappingModel.js`，加载项与 WireMock 的 `stub-mapping` schema 1:1 对齐。以下几点最容易踩坑，也是文档必须说明的部分：
 
-### 1. URL 匹配四选一（互斥）
+### 1. URL 匹配五选一（互斥）
 
 | 表单 `urlMatchType` | 载荷字段 | 语义 |
 |---------------------|----------|------|
-| `urlPath` | `request.urlPath` | 路径精确匹配 |
-| `urlPathPattern` | `request.urlPathPattern` | 路径正则匹配（此时可用 `pathParameters`） |
+| `urlPath` | `request.urlPath` | 路径精确匹配（`{变量}` 会被当成普通字符） |
+| `urlPathTemplate` | `request.urlPathTemplate` | RFC 6570 路径模板，`{变量}` 可配合 `pathParameters` 断言 |
+| `urlPathPattern` | `request.urlPathPattern` | 路径正则匹配（此时也可用 `pathParameters` 校验命名组） |
 | `url` | `request.url` | 含查询串的 URL 精确匹配 |
 | `urlPattern` | `request.urlPattern` | 含查询串的 URL 正则匹配 |
 
-同时给出多个字段会被 WireMock 拒绝，因此 `buildMappingPayload` 只写选中项对应的那一个键。
+同时给出多个字段会被 WireMock 拒绝，因此 `buildMappingPayload` 只写选中项对应的那一个键。带 `{变量}` 的路径必须用 `urlPathTemplate`：写进正则字段会被 Java 正则引擎当成量词（`Illegal repetition`），写进精确字段则永远匹配不到真实请求，两种情况都会被 `validateMappingForm` 在提交前拦下。
 
 ### 2. 请求体匹配写 `request.bodyPatterns`
 

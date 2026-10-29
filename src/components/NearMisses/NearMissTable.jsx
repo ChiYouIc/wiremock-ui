@@ -6,7 +6,7 @@ const { Text } = Typography;
 
 const summarizePattern = (pattern) => {
   if (!pattern) return '-';
-  const url = pattern.url || pattern.urlPattern || pattern.urlPath || pattern.urlPathPattern || '-';
+  const url = pattern.url || pattern.urlPattern || pattern.urlPath || pattern.urlPathTemplate || pattern.urlPathPattern || '-';
   return `${pattern.method || 'ANY'} ${url}`;
 };
 
@@ -99,6 +99,7 @@ const NearMissTable = ({ nearMisses, loading, emptyText }) => (
         record.requestPattern?.url ||
           record.requestPattern?.urlPath ||
           record.requestPattern?.urlPattern ||
+          record.requestPattern?.urlPathTemplate ||
           record.requestPattern?.urlPathPattern,
         record.matchResult?.distance,
       ]

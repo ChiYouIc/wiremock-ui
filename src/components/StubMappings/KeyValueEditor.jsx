@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Row, Col, Input, Button, Select, Tooltip } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
+import { rowsToObject } from './mappingModel';
 
+// 参数/请求头这类「多值断言」只支持下面这些操作；JSONPath / XPath / equalToJson 是请求体专用，
+// 放到 query/header/path 参数上会被服务端拒绝，因此不在选项里。
 const PREDICATE_OPTIONS = [
   { value: 'equalTo', label: 'equalTo' },
+  { value: 'equalToIgnoreCase', label: 'equalToIgnoreCase' },
   { value: 'contains', label: 'contains' },
   { value: 'doesNotContain', label: 'doesNotContain' },
   { value: 'matches', label: 'matches（正则）' },
   { value: 'doesNotMatch', label: 'doesNotMatch' },
-  { value: 'matchesJsonPath', label: 'matchesJsonPath' },
-  { value: 'matchesXPath', label: 'matchesXPath' },
-  { value: 'equalToJson', label: 'equalToJson' },
   { value: 'absent', label: 'absent' },
 ];
 
@@ -45,21 +46,12 @@ const toRows = (value) => {
   });
 };
 
-const toObject = (rows) => {
-  const result = {};
-  rows.forEach((row) => {
-    const key = row.key?.trim();
-    if (!key) return;
-    if (row.mode === 'predicate') {
-      result[key] = row.predicate === 'absent' ? { absent: true } : { [row.predicate]: row.value ?? '' };
-    } else {
-      result[key] = row.value ?? '';
-    }
-  });
-  return result;
-};
+// WireMock 只接受断言对象（{"equalTo": "1"}），裸字符串会被拒：
+// `"1" is not a valid match operation`，所以 pattern 模式要包成 equalTo；
+// 但响应头 / webhook 头是纯字符串映射，必须保持原样。
+const toObject = (rows, valueMode) => rowsToObject(rows, valueMode);
 
-const KeyValueEditor = ({ value, onChange, placeholder, allowPredicate = false }) => {
+const KeyValueEditor = ({ value, onChange, placeholder, allowPredicate = false, valueMode = 'plain' }) => {
   const [rows, setRows] = useState(() => toRows(value));
   const lastEmitted = useRef(null);
 
@@ -71,13 +63,17 @@ const KeyValueEditor = ({ value, onChange, placeholder, allowPredicate = false }
 
   const commit = (nextRows) => {
     setRows(nextRows);
-    const obj = toObject(nextRows);
+    const obj = toObject(nextRows, valueMode);
     lastEmitted.current = JSON.stringify(obj);
     onChange?.(obj);
   };
 
   const updateRow = (id, patch) =>
     commit(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+
+  const hasIgnoredRow = rows.some(
+    (row) => row.key?.trim() && row.mode !== 'predicate' && !row.value
+  );
 
   return (
     <div>
@@ -130,6 +126,11 @@ const KeyValueEditor = ({ value, onChange, placeholder, allowPredicate = false }
       >
         添加 {placeholder || '键值对'}
       </Button>
+      {hasIgnoredRow && (
+        <div style={{ color: '#d48806', fontSize: 12, marginTop: 4 }}>
+          值为空的行会被忽略，不会下发到 WireMock
+        </div>
+      )}
     </div>
   );
 };

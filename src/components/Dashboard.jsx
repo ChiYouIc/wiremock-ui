@@ -203,7 +203,7 @@ const Dashboard = ({ capabilities }) => {
       const request = mapping.request || {};
       mappingNames[mapping.id] =
         mapping.name ||
-        `${request.method || ''} ${request.urlPath || request.urlPathPattern || request.url || ''}`.trim();
+        `${request.method || ''} ${request.urlPath || request.urlPathTemplate || request.urlPathPattern || request.url || ''}`.trim();
     });
 
     const stubHits = {};
@@ -224,7 +224,7 @@ const Dashboard = ({ capabilities }) => {
           name:
             mappingNames[stub.id] ||
             stub.name ||
-            `${request.method || ''} ${request.urlPath || request.urlPathPattern || request.url || ''}`.trim() ||
+            `${request.method || ''} ${request.urlPath || request.urlPathTemplate || request.urlPathPattern || request.url || ''}`.trim() ||
             stub.id.slice(0, 8),
           count: 0,
         };

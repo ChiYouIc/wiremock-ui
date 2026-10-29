@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Form, Input, Row, Col, InputNumber, Select, Collapse, Switch } from 'antd';
 import Editor from '@monaco-editor/react';
 import KeyValueEditor from '../KeyValueEditor';
@@ -11,12 +11,19 @@ const BODY_SOURCES = [
   { value: 'bodyFileName', label: 'bodyFileName（引用 __files 文件）' },
 ];
 
-const ResponseConfigTab = () => {
+const PANEL_KEYS = ['chunked', 'proxy'];
+
+const ResponseConfigTab = ({ revealSignal = 0 }) => {
   const form = Form.useFormInstance();
   const bodySource = Form.useWatch(['response', 'bodySource'], form) || 'body';
   const delayType = Form.useWatch(['response', 'delayType'], form) || 'none';
   const chunkedEnabled = Form.useWatch(['response', 'chunkedEnabled'], form);
   const fault = Form.useWatch(['response', 'fault'], form);
+  const [activeKeys, setActiveKeys] = useState([]);
+
+  useEffect(() => {
+    if (revealSignal > 0) setActiveKeys(PANEL_KEYS);
+  }, [revealSignal]);
 
   const items = [
     {
@@ -114,14 +121,21 @@ const ResponseConfigTab = () => {
         </Col>
       </Row>
 
-      <Form.Item label="响应体" name={['response', 'bodyValue']}>
+      <Form.Item
+        label="响应体"
+        name={['response', 'bodyValue']}
+        extra={fault ? '已注入故障，响应体不会随响应返回' : undefined}
+      >
         {bodySource === 'bodyFileName' ? (
-          <Input placeholder="例如 payloads/user1.json（相对 __files 目录）" />
+          <Input
+            placeholder="例如 payloads/user1.json（相对 __files 目录）"
+            disabled={Boolean(fault)}
+          />
         ) : (
           <Editor
             height="200px"
             language={bodySource === 'jsonBody' ? 'json' : 'plaintext'}
-            options={{ minimap: { enabled: false } }}
+            options={{ minimap: { enabled: false }, readOnly: Boolean(fault) }}
           />
         )}
       </Form.Item>
@@ -175,7 +189,7 @@ const ResponseConfigTab = () => {
         </Row>
       )}
 
-      <Collapse items={items} />
+      <Collapse items={items} activeKey={activeKeys} onChange={setActiveKeys} />
     </>
   );
 };

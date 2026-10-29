@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
-import { Card, Form, Space, Button, Tag, Typography, Popconfirm } from 'antd';
-import {
+import { Card, Form, Space, Button, Tag, Typography, Popconfirm } from 'antd';import {
   SaveOutlined,
   UndoOutlined,
   CopyOutlined,
@@ -21,12 +20,18 @@ const EditorSection = ({ title, extra, children }) => (
   </Card>
 );
 
-const describe = (record) => {
-  if (!record) return { method: 'GET', url: '/' };
-  const request = record.request || {};
+const describe = (record, liveValues) => {
+  const request = liveValues?.request || record?.request || {};
   return {
-    method: request.method || 'ANY',
-    url: request.url || request.urlPattern || request.urlPath || request.urlPathPattern || '/',
+    method: request.method || 'GET',
+    url:
+      request.urlValue ||
+      request.url ||
+      request.urlPattern ||
+      request.urlPath ||
+      request.urlPathTemplate ||
+      request.urlPathPattern ||
+      '',
   };
 };
 
@@ -38,13 +43,15 @@ const MappingEditor = ({
   saving,
   liveValues,
   groupOptions,
+  notice,
+  revealSignal,
   onDirty,
   onSave,
   onReset,
   onDuplicate,
   onDelete,
 }) => {
-  const { method, url } = describe(record);
+  const { method, url } = describe(record, liveValues);
 
   const preview = useMemo(() => {
     try {
@@ -101,16 +108,18 @@ const MappingEditor = ({
       </div>
 
       <div className="mapping-editor__body">
+        {notice}
+
         <EditorSection title="基本信息">
           <BasicInfoTab groupOptions={groupOptions} />
         </EditorSection>
 
         <EditorSection title="请求匹配">
-          <RequestConfigTab />
+          <RequestConfigTab revealSignal={revealSignal} />
         </EditorSection>
 
         <EditorSection title="响应配置">
-          <ResponseConfigTab />
+          <ResponseConfigTab revealSignal={revealSignal} />
         </EditorSection>
 
         <EditorSection title="Webhook（可选）">

@@ -1,6 +1,7 @@
-import { notification } from 'antd';
+import { notification, Modal } from 'antd';
 import { stubMappingsApi } from '../../services/wiremockApi';
 import { showApiError } from '../../services/wiremockErrors';
+import { normalizeImportedMappings } from './mappingModel';
 
 // 导出映射
 export const handleExport = (mappings, selectedRowKeys) => {
@@ -67,11 +68,52 @@ export const handleImport = (file, fetchMappings) => {
       return;
     }
 
+    const { mappings: normalized, converted, coerced, problems } =
+      normalizeImportedMappings(mappings);
+    if (problems.length > 0) {
+      notification.error({
+        message: '导入失败：URL 匹配写法不合法',
+        description: `${problems
+          .slice(0, 5)
+          .map((item) => `${item.name}：${item.reason}`)
+          .join('\n')}`,
+        style: { whiteSpace: 'pre-line' },
+        duration: 8,
+      });
+      return;
+    }
+
+    // 带 id 的映射会覆盖服务端同 id 的配置，导入前必须让用户知道
+    const withId = normalized.filter((mapping) => mapping?.id || mapping?.uuid).length;
+    const confirmed = await new Promise((resolve) => {
+      Modal.confirm({
+        title: `导入 ${normalized.length} 个映射？`,
+        content:
+          withId > 0
+            ? `其中 ${withId} 个带 id，会覆盖服务端上同 id 的映射，且不可撤销。`
+            : '导入后立即生效，不会删除其它映射。',
+        okText: '导入',
+        cancelText: '取消',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+
     try {
-      await stubMappingsApi.import({ mappings });
+      await stubMappingsApi.import({ mappings: normalized });
+      const notes = [];
+      if (converted.length > 0) {
+        notes.push(`${converted.length} 个映射的 {变量} 路径已自动改为 urlPathTemplate`);
+      }
+      if (coerced.length > 0) {
+        notes.push(`${coerced.length} 处键值已补成 { equalTo: ... } 断言`);
+      }
+      const convertedNote = notes.length > 0 ? `；其中 ${notes.join('、')}` : '';
       notification.success({
         message: '导入完成',
-        description: `已导入 ${mappings.length} 个映射`,
+        description: `已导入 ${normalized.length} 个映射${convertedNote}`,
+        duration: notes.length > 0 ? 8 : 4.5,
       });
       fetchMappings();
     } catch (error) {
@@ -98,6 +140,7 @@ export const filterMappings = (mappings, searchText) => {
       request.url,
       request.urlPattern,
       request.urlPath,
+      request.urlPathTemplate,
       request.urlPathPattern,
       request.method,
       mapping.name,

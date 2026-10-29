@@ -118,13 +118,18 @@ WireMock 开源版一个进程只有一套映射/日志/文件，没有 Cloud �
 #### 2. Stub 映射
 - **主从布局**：左侧为映射列表（搜索、新建、复制、删除、点击即选中），右侧为配置表单，无需弹窗；字段按「基本信息 / 请求匹配 / 响应配置 / Webhook」分节平铺，滚动即可，底部固定保存栏（支持 Ctrl / ⌘ + S）
 - **实时载荷预览**：表单底部展示即将提交的 stub-mapping JSON，改动即时更新
-- **未保存保护**：切换映射或新建前会提示放弃未保存的修改
-- URL 匹配四选一：`urlPath`（路径精确）、`urlPathPattern`（路径正则）、`url`（含查询串精确）、`urlPattern`（含查询串正则）
+- **未保存保护**：切换映射、新建、复制、刷新、导入、清理未匹配、删除分组前都会提示放弃未保存的修改；「刷新」还会用服务端最新值回填右侧表单（映射已被别人删除时给出提示）
+- **校验定位**：提交前校验失败会把错误落到具体字段（自动展开折叠面板并滚动过去），不再只弹一条文本通知
+- URL 匹配五选一：`urlPath`（路径精确）、`urlPathTemplate`（路径模板，支持 `{变量}`）、`urlPathPattern`（路径正则）、`url`（含查询串精确）、`urlPattern`（含查询串正则）；新建映射默认不预填 URL，避免误建匹配根路径的 stub
+- 带占位符的路径（如 `/openapi/param2/{version}/{namespace}/{apiName}/{appKey}`）必须用 `urlPathTemplate`：`urlPathPattern` / `urlPattern` 会被 WireMock 当 Java 正则编译，`{version}` 会被当成量词并返回 `Illegal repetition`；`urlPath` / `url` 是精确匹配，`{version}` 会被当成普通字符而永远不命中。两种写法都会在提交前被拦下；反过来，模板里混用 `[0-9]`、`.*` 也会被提示
 - 请求匹配支持 query 参数、header、cookie、form 参数、path 参数、Basic Auth、请求体匹配器（`bodyPatterns`）
-- 响应支持状态码/状态消息/headers、`body` / `jsonBody` / `base64Body` / `bodyFileName`、fault、固定延时、延时分布、chunked 延时、反向代理、响应转换器
+- query / header / cookie / form / path 参数的值在表单里可直接填字符串，提交时会自动补成 WireMock 要求的断言对象（`{"equalTo": "1"}`）；导入时也会自动补齐。断言下拉只列多值断言（`equalTo` / `equalToIgnoreCase` / `contains` / `doesNotContain` / `matches` / `doesNotMatch` / `absent`），JSONPath / XPath / `equalToJson` 属于请求体专用，不会出现在这里
+- 键填了但值留空的行会被忽略（不会变成 `{"equalTo": ""}` 那种「必须等于空串」的约束），表单里会有提示
+- 请求体匹配器可分别设置：`equalTo` 的「忽略大小写」、`equalToJson` 的「忽略数组顺序 / 忽略多余字段」
+- 响应支持状态码/状态消息/headers、`body` / `jsonBody` / `base64Body` / `bodyFileName`、fault、固定延时、延时分布、chunked 延时、反向代理、响应转换器；注入 fault 时响应体编辑器转为只读
 - 请求体校验（JSON 合法性、延时上下限、lognormal 参数等）在提交前完成，减少服务端 422
 - **分组（伪工作空间）**：WireMock 开源版没有工作空间概念，本工具用 `metadata.wmui.group` 做分组标签——左侧可切换分组、按组导出、按组删除（`POST /__admin/mappings/remove-by-metadata`）；注意分组只用于分类，不构成隔离
-- 列表级操作：导出全部为 JSON、从 JSON 导入、清理未匹配映射
+- 列表级操作：导出全部为 JSON、从 JSON 导入（导入前确认条数，并提示其中多少个带 `id` 会覆盖服务端同 id 映射）、清理未匹配映射（二次确认）
 
 ##### 导入文件的三种合法形态
 
@@ -141,6 +146,8 @@ WireMock 开源版一个进程只有一套映射/日志/文件，没有 Cloud �
 - `GET /__admin/requests/{id}` 导出的**请求日志**不能直接导入（含 `wasMatched` / `timing` / `subEvents` 等日志字段）。要复用它，取内部的 `stubMapping` 字段再包成 `{ "mappings": [...] }`。
 - 响应体里用了 `{{request.query.xxx}}` 之类的模板时，映射必须带 `"transformers": ["response-template"]`，否则占位符会被原样返回。
 - `postServeActions` 用对象形态 `{"webhook": {...}}`；WireMock 4.x 回读时会归一化成数组，不影响再次导入。
+- 路径里带 `{变量}` 的映射（如 `/openapi/param2/{version}/{namespace}/{apiName}/{appKey}`）导入时会自动把 `urlPattern` / `urlPathPattern` / `urlPath` / `url` 改写成 `urlPathTemplate`——否则服务端按正则编译会报 `Illegal repetition`，或者按字面量匹配而永远不命中。若同时混用了正则元字符（`.*`、`\d` 等）则不会自动改写，导入会被拦下并提示手工修正。
+- 参数值写成裸字符串（`"queryParameters": { "version": "1" }`）导入时会自动补成 `{"equalTo": "1"}`，避免服务端返回 `"1" is not a valid match operation`。
 - 映射自带的 `id` 会保留：重复导入同一个文件是「更新」而不是「新增」，需要副本时先去掉 `id`/`uuid`。
 
 #### 3. 请求记录
@@ -291,7 +298,7 @@ pnpm test:contract        # 离线：用 wiremock-admin-api.json 校验前端生
 WM_URL=http://localhost:8080 pnpm test:contract:live   # 额外对真实服务做写入冒烟
 ```
 
-`scripts/contract-test.mjs` 用 `ajv` 加载 `wiremock-admin-api.json`，按其中的 `stub-mapping` / `request-pattern` / `response-definition` schema 校验 `buildMappingPayload()` 的产物，并覆盖 8 组用例：默认表单、URL 匹配互斥、请求体匹配、Basic Auth、Webhook、延时分布、响应体来源、回读/回写一致性。`--live`（或用 `WM_URL` 指定地址）时会再对运行中的 WireMock 做一次真实写入。
+`scripts/contract-test.mjs` 用 `ajv` 加载 `wiremock-admin-api.json`，按其中的 `stub-mapping` / `request-pattern` / `response-definition` schema 校验 `buildMappingPayload()` 的产物，并覆盖 12 组用例：默认表单、URL 匹配互斥、请求体匹配、Basic Auth、Webhook、延时分布、响应体来源、回读/回写一致性、路径模板、导入归一化、断言简写、键值编辑器（pattern / plain 两种输出）。`--live`（或用 `WM_URL` 指定地址）时会再对运行中的 WireMock 做一次真实写入。
 
 ## 开发指南
 
@@ -317,7 +324,9 @@ WM_URL=http://localhost:8080 pnpm test:contract:live   # 额外对真实服务�
 | pointer 指向 | 原因 | 正确做法 |
 |--------------|------|----------|
 | `/request/body` | 使用了旧的 `request.body` | 请求体匹配必须写进 `request.bodyPatterns` 数组 |
-| `/request` | 同时给了多个 URL 匹配字段 | `url` / `urlPath` / `urlPathPattern` / `urlPattern` 只能四选一 |
+| `/request` | 同时给了多个 URL 匹配字段 | `url` / `urlPath` / `urlPathTemplate` / `urlPathPattern` / `urlPattern` 只能五选一 |
+| `/request` + `Illegal repetition` | 把 `{version}` 这类占位符写进了 `urlPathPattern` / `urlPattern`（按 Java 正则编译，`{` 被当成量词） | 改用 `urlPathTemplate`，或把占位符改写成 `([^/]+)` |
+| `/request/queryParameters/{name}` | `"1" is not a valid match operation`：参数值写成了裸字符串 | 断言对象形态：`{"equalTo": "1"}` / `{"matches": "1\\d+"}` / `{"absent": true}` |
 | `/request/basicAuth` | 字段名写错 | 契约字段是 `basicAuthCredentials` |
 | `/response/delayDistribution` | 参数与类型不匹配 | `uniform` 用 `lower`/`upper`；`lognormal` 必须用 `median`/`sigma`（不支持 lower/upper） |
 | `/postServeActions` | 形态不对 | 必须是"扩展名 → 参数"的对象，例如 `{"webhook": {...}}`，不能是数组 |

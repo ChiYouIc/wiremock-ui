@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Tag, Typography, Empty, Spin, Tooltip, Button, Input, Select, Space } from 'antd';
 import {
   CopyOutlined,
@@ -26,12 +26,21 @@ const METHOD_COLORS = {
 
 const getUrl = (record) => {
   const request = record.request || {};
-  return request.url || request.urlPattern || request.urlPath || request.urlPathPattern || '(未配置 URL)';
+  return (
+    request.url ||
+    request.urlPattern ||
+    request.urlPath ||
+    request.urlPathTemplate ||
+    request.urlPathPattern ||
+    '(未配置 URL)'
+  );
 };
 
-const isPattern = (record) => {
+const matchKind = (record) => {
   const request = record.request || {};
-  return Boolean(request.urlPattern || request.urlPathPattern);
+  if (request.urlPathTemplate) return '模板';
+  if (request.urlPattern || request.urlPathPattern) return '正则';
+  return null;
 };
 
 const statusColor = (status) => {
@@ -55,11 +64,20 @@ const MappingList = ({
   onDelete,
   groups = [],
   groupFilter = ALL_GROUPS,
+  ungroupedTotal = 0,
   onGroupFilterChange,
   onExportGroup,
   onDeleteGroup,
 }) => {
   const isRealGroup = groupFilter !== ALL_GROUPS && groupFilter !== NO_GROUP;
+  const listRef = useRef(null);
+
+  // 保存/选中后把对应项滚到可视区，长列表里不至于迷路
+  useEffect(() => {
+    if (!selectedId) return;
+    const item = listRef.current?.querySelector(`[data-mapping-id="${selectedId}"]`);
+    item?.scrollIntoView({ block: 'nearest' });
+  }, [selectedId, records]);
 
   return (
     <aside className="mapping-list-pane">
@@ -84,7 +102,7 @@ const MappingList = ({
           onChange={onGroupFilterChange}
           options={[
             { value: ALL_GROUPS, label: `全部分组（${total}）` },
-            { value: NO_GROUP, label: '未分组' },
+            { value: NO_GROUP, label: `未分组（${ungroupedTotal}）` },
             ...groups.map((group) => ({ value: group, label: group })),
           ]}
         />
@@ -118,7 +136,7 @@ const MappingList = ({
         </div>
       </div>
 
-      <div className="mapping-list">
+      <div className="mapping-list" ref={listRef}>
         {loading && records.length === 0 && (
           <div className="loading-spinner">
             <Spin />
@@ -140,6 +158,7 @@ const MappingList = ({
           return (
             <div
               key={record.id}
+              data-mapping-id={record.id}
               role="button"
               tabIndex={0}
               className={`mapping-item${selectedId === record.id ? ' mapping-item--active' : ''}`}
@@ -173,9 +192,9 @@ const MappingList = ({
                     {group}
                   </Tag>
                 )}
-                {isPattern(record) && (
+                {matchKind(record) && (
                   <Tag bordered={false} color="geekblue" style={{ marginLeft: 6 }}>
-                    正则
+                    {matchKind(record)}
                   </Tag>
                 )}
                 {record.scenarioName && (

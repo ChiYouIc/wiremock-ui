@@ -16,6 +16,8 @@ import {
   buildMappingPayload,
   getDefaultFormValues,
   mapRecordToFormData,
+  normalizeImportedMappings,
+  rowsToObject,
   validateMappingForm,
 } from '../src/components/StubMappings/mappingModel.js';
 
@@ -70,7 +72,9 @@ const assertServerRules = (payload, label) => {
     `${label} 使用 basicAuthCredentials 而不是 basicAuth`
   );
 
-  const urlFields = ['url', 'urlPath', 'urlPattern', 'urlPathPattern'].filter((key) => key in request);
+  const urlFields = ['url', 'urlPath', 'urlPattern', 'urlPathPattern', 'urlPathTemplate'].filter(
+    (key) => key in request
+  );
   assert(urlFields.length === 1, `${label} 只有一种 URL 匹配字段（实际：${urlFields.join('|') || '无'}）`);
 
   if (payload.postServeActions) {
@@ -86,7 +90,8 @@ const withOverrides = (overrides) => {
   return {
     ...base,
     ...overrides,
-    request: { ...base.request, ...(overrides.request || {}) },
+    // 测试用的「无关 URL」默认给一个合法值；默认空 URL 的行为在 [1] 里单独验证
+    request: { ...base.request, urlValue: '/', ...(overrides.request || {}) },
     response: { ...base.response, ...(overrides.response || {}) },
   };
 };
@@ -96,17 +101,27 @@ console.log('契约测试：wiremock-admin-api.json (WireMock 3.12.2)');
 // 1. 默认表单
 {
   console.log('\n[1] 默认表单');
-  const payload = buildMappingPayload(getDefaultFormValues());
+  const defaults = getDefaultFormValues();
+  const payload = buildMappingPayload(defaults);
   validateStubMapping(payload, '默认载荷');
-  assertServerRules(payload, '默认载荷');
-  assert(payload.request.urlPath === '/', '默认使用 urlPath 匹配');
-  assert(validateMappingForm(getDefaultFormValues()).length === 0, '默认表单通过本地校验');
+  assert(!('urlPath' in payload.request), '新建默认不填 URL（避免误建 GET /）');
+  assert(
+    validateMappingForm(defaults).some((error) => error.path?.join('.') === 'request.urlValue'),
+    '默认表单被本地校验拦下并指向 request.urlValue'
+  );
+
+  const filled = withOverrides({ request: { urlMatchType: 'urlPath', urlValue: '/' } });
+  const filledPayload = buildMappingPayload(filled);
+  validateStubMapping(filledPayload, '填写 URL 后的载荷');
+  assertServerRules(filledPayload, '填写 URL 后的载荷');
+  assert(filledPayload.request.urlPath === '/', 'urlPath 精确匹配按原样下发');
+  assert(validateMappingForm(filled).length === 0, '填写 URL 后通过本地校验');
 }
 
-// 2. URL 匹配四选一
+// 2. URL 匹配方式互斥
 {
   console.log('\n[2] URL 匹配方式互斥');
-  ['url', 'urlPath', 'urlPattern', 'urlPathPattern'].forEach((type) => {
+  ['url', 'urlPath', 'urlPattern', 'urlPathPattern', 'urlPathTemplate'].forEach((type) => {
     const values = withOverrides({
       request: { urlMatchType: type, urlValue: '/api/x', urlPath: '/legacy', urlPathPattern: '/legacy.*' },
     });
@@ -252,12 +267,195 @@ console.log('契约测试：wiremock-admin-api.json (WireMock 3.12.2)');
   assert(responseValid, `response 通过 response-definition 校验${responseValid ? '' : `（${formatErrors(validators.responseDefinition.errors)}）`}`);
 }
 
+// 9. 路径模板（urlPathTemplate）
+{
+  console.log('\n[9] 路径模板');
+  const template = '/openapi/param2/{version}/{namespace}/{apiName}/{appKey}';
+  const values = withOverrides({
+    request: {
+      urlMatchType: 'urlPathTemplate',
+      urlValue: template,
+      pathParameters: { version: { equalTo: 'v2' } },
+    },
+  });
+  const payload = buildMappingPayload(values);
+  validateStubMapping(payload, 'urlPathTemplate 载荷');
+  assertServerRules(payload, 'urlPathTemplate 载荷');
+  assert(payload.request.urlPathTemplate === template, 'urlPathTemplate 原样下发模板（不做正则转义）');
+  assert(payload.request.pathParameters?.version?.equalTo === 'v2', 'urlPathTemplate 下保留 pathParameters');
+  assert(validateMappingForm(values).length === 0, '路径模板表单通过本地校验');
+
+  // 服务端会把 urlPathPattern 当 Java 正则编译，{version} 会报 Illegal repetition
+  const regexWithTemplate = withOverrides({
+    request: { urlMatchType: 'urlPathPattern', urlValue: template },
+  });
+  assert(
+    validateMappingForm(regexWithTemplate).some((error) => error.message.includes('urlPathTemplate')),
+    '本地校验拦截「正数字段里写路径模板」'
+  );
+
+  // 精确匹配里写模板：永远命中不到真实请求
+  const exactWithTemplate = withOverrides({
+    request: { urlMatchType: 'urlPath', urlValue: template },
+  });
+  assert(
+    validateMappingForm(exactWithTemplate).some(
+      (error) => error.message.includes('永远匹配不到') && error.path?.join('.') === 'request.urlValue'
+    ),
+    '本地校验拦截「精确匹配里写路径模板」并指向 urlValue'
+  );
+
+  // 模板里混用正则元字符
+  const metaInTemplate = withOverrides({
+    request: { urlMatchType: 'urlPathTemplate', urlValue: '/users/[0-9]+' },
+  });
+  assert(
+    validateMappingForm(metaInTemplate).some((error) => error.message.includes('字面量')),
+    '本地校验拦截「模板里混用正则元字符」'
+  );
+
+  const unknownParam = withOverrides({
+    request: {
+      urlMatchType: 'urlPathTemplate',
+      urlValue: '/users/{userId}',
+      pathParameters: { id: { equalTo: '1' } },
+    },
+  });
+  assert(
+    validateMappingForm(unknownParam).some((error) => error.message.includes('id')),
+    '本地校验拦截模板里不存在的路径参数'
+  );
+
+  const roundTrip = buildMappingPayload(
+    mapRecordToFormData({ request: { method: 'GET', urlPathTemplate: template } })
+  );
+  assert(roundTrip.request.urlPathTemplate === template, 'urlPathTemplate 可回读回写');
+}
+
+// 10. 导入归一化：urlPattern 里的 {变量} 自动改为 urlPathTemplate
+{
+  console.log('\n[10] 导入归一化');
+  const imported = [
+    {
+      name: '创建订单',
+      request: {
+        method: 'POST',
+        urlPattern: '/openapi/param2/{version}/{namespace}/{apiName}/{appKey}',
+        bodyPatterns: [{ matches: '.*594237325375.*' }],
+      },
+      response: { status: 200, jsonBody: { success: true } },
+    },
+  ];
+  const { mappings, converted, problems } = normalizeImportedMappings(imported);
+  assert(problems.length === 0, '纯 {变量} 路径不产生 problem');
+  assert(converted.length === 1, '识别出 1 个需要改写的映射');
+  assert(
+    mappings[0].request.urlPathTemplate === imported[0].request.urlPattern,
+    'urlPattern 改写为 urlPathTemplate'
+  );
+  assert(!('urlPattern' in mappings[0].request), '改写后不再保留 urlPattern');
+  assert(mappings[0].request.bodyPatterns?.length === 1, '其余字段原样保留');
+  validateStubMapping({ request: mappings[0].request, response: mappings[0].response }, '“创建订单”');
+
+  const mixed = normalizeImportedMappings([
+    { name: '混用', request: { urlPattern: '/api/{id}/.*' } },
+  ]);
+  assert(mixed.problems.length === 1, '混用正则元字符时报告 problem 而不是瞎改');
+
+  const plain = normalizeImportedMappings([{ name: '普通', request: { urlPathPattern: '/api/[0-9]+' } }]);
+  assert(plain.converted.length === 0 && plain.problems.length === 0, '真正的正则不受影响');
+}
+
+// 11. 断言简写：{"version": "1"} → {"version": {"equalTo": "1"}}
+{
+  console.log('\n[11] 断言简写');
+  const shorthandValues = withOverrides({
+    request: {
+      urlMatchType: 'urlPathTemplate',
+      urlValue: '/openapi/param2/{version}/{namespace}/{apiName}/{appKey}',
+      queryParameters: { version: 1, namespace: 'com.alibaba.trade', apiName: 'alibaba.trade.createCrossOrder' },
+      headers: { 'Content-Type': 'application/json', 'X-Num': 2 },
+    },
+  });
+  const payload = buildMappingPayload(shorthandValues);
+  validateStubMapping(payload, '断言简写载荷');
+  assert(payload.request.queryParameters.version.equalTo === '1', '数字被补成 equalTo 字符串');
+  assert(
+    payload.request.queryParameters.namespace.equalTo === 'com.alibaba.trade',
+    '字符串被补成 equalTo'
+  );
+  assert(payload.request.headers['X-Num'].equalTo === '2', 'headers 同样补成 equalTo');
+
+  const importedForm = normalizeImportedMappings([
+    {
+      name: '创建订单(urlPath)',
+      request: {
+        method: 'POST',
+        urlPath: '/openapi/param2/{version}/{namespace}/{apiName}/{appKey}',
+        queryParameters: { version: '1', namespace: 'com.alibaba.trade' },
+      },
+    },
+  ]);
+  assert(importedForm.problems.length === 0, 'urlPath 写模板不算 problem');
+  assert(importedForm.converted[0]?.from === 'urlPath', 'urlPath 里的模板改写成 urlPathTemplate');
+  assert(
+    importedForm.mappings[0].request.queryParameters.version.equalTo === '1',
+    '导入时把断言简写补齐'
+  );
+  assert(importedForm.coerced.length === 1, '导入时统计补齐的键值数');
+
+  const noPairs = buildMappingPayload(getDefaultFormValues());
+  assert(typeof noPairs.request.queryParameters === 'undefined', '没有键值时不写空对象');
+
+  const arrayParam = validateMappingForm(
+    withOverrides({ request: { urlValue: '/', queryParameters: { tag: ['a', 'b'] } } })
+  );
+  assert(
+    arrayParam.some((error) => error.message.includes('数组') && error.path?.join('.') === 'request.queryParameters'),
+    '数组形态的参数值被拦下而不是静默丢弃'
+  );
+}
+
+// 12. 键值编辑器：pattern 模式包断言，plain 模式保持字符串，空值行忽略
+{
+  console.log('\n[12] 键值编辑器');
+  const rows = [
+    { key: 'version', mode: 'text', value: '1' },
+    { key: 'trace', mode: 'predicate', predicate: 'absent' },
+    { key: 'empty', mode: 'text', value: '' },
+  ];
+  const pattern = rowsToObject(rows, 'pattern');
+  assert(pattern.version.equalTo === '1', 'pattern 模式下裸值包成 equalTo');
+  assert(pattern.trace.absent === true, 'predicate 模式保持断言');
+  assert(!('empty' in pattern), 'text 模式空值行被忽略（不会变成 equalTo ""）');
+
+  const headerRows = [{ key: 'Content-Type', mode: 'text', value: 'application/json' }];
+  const plain = rowsToObject(headerRows, 'plain');
+  assert(plain['Content-Type'] === 'application/json', 'plain 模式保持纯字符串');
+
+  const payload = buildMappingPayload(
+    withOverrides({
+      response: { headers: plain },
+      webhook: { url: 'https://example.com/cb', method: 'POST', headers: plain },
+    })
+  );
+  validateStubMapping(payload, '响应头/webhook 头载荷');
+  assert(
+    typeof payload.response.headers['Content-Type'] === 'string',
+    '响应头仍是字符串（服务端只接受字符串映射）'
+  );
+  assert(
+    typeof payload.postServeActions.webhook.headers['Content-Type'] === 'string',
+    'webhook 请求头仍是字符串'
+  );
+}
+
 // ---- 可选的在线冒烟 ----
 const liveMode = process.argv.includes('--live');
 if (liveMode) {
   const base = (process.env.WM_URL || 'http://localhost:8080').replace(/\/$/, '');
   const admin = `${base}/__admin`;
-  console.log(`\n[9] 在线冒烟：${admin}`);
+  console.log(`\n[13] 在线冒烟：${admin}`);
 
   const call = async (method, url, body, headers = {}) => {
     const response = await fetch(url, {

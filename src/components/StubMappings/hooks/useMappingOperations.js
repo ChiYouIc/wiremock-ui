@@ -21,16 +21,11 @@ export const useMappingOperations = (fetchMappings) => {
     }
   };
 
-  // 保存映射：返回服务端返回的映射对象（失败返回 null）
+  // 保存映射：返回 { ok, errors, mapping }，校验不通过时把错误交给调用方定位字段
   const handleSave = async (values, selectedMapping) => {
     const errors = validateMappingForm(values);
     if (errors.length > 0) {
-      notification.error({
-        message: '配置校验未通过',
-        description: errors.join('\n'),
-        style: { whiteSpace: 'pre-line' },
-      });
-      return null;
+      return { ok: false, errors };
     }
 
     try {
@@ -45,10 +40,10 @@ export const useMappingOperations = (fetchMappings) => {
       });
 
       await fetchMappings();
-      return response.data || { id: selectedMapping?.id };
+      return { ok: true, errors: [], mapping: response.data || { id: selectedMapping?.id } };
     } catch (error) {
       showApiError(error, selectedMapping ? '更新失败' : '创建失败');
-      return null;
+      return { ok: false, errors: [] };
     }
   };
 
